@@ -719,7 +719,7 @@
   function leaveRoom() {
     leaving = true;
     if (local.sharing) stopShare();
-    exitFullscreen();
+    exitFullscreen(true);
     for (const id of [...peers.keys()]) removePeer(id);
     if (ws) { try { ws.close(); } catch {} ws = null; }
     room = null;
@@ -1164,23 +1164,23 @@
   }
   function enterFullscreen() {
     fullscreen = true;
+    try { history.pushState({ huddleFullscreen: true }, "", location.href); } catch {}
     setFocus(focusedId && peers.has(focusedId) ? focusedId : defaultFocus());
     els.call.classList.add("fullscreen");
     toggleVolumePop(false);
     if (currentPanel === "chat") openPanel(null);
     $("fsFlip").hidden = els.flipBtn.hidden;
-    // Real full screen where the browser allows it (Android, computers). iPhone fills the window instead.
-    const el = document.documentElement;
-    try { if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen({ navigationUI: "hide" }).catch(() => {}); } catch {}
+    // Fills the app window with the video. We deliberately don't use the browser's own
+    // full screen mode: on Android it pins a grey "To exit full screen, drag from the top" notice.
     els.call.classList.remove("show-ui");
   }
-  function exitFullscreen() {
+  function exitFullscreen(fromBack) {
     if (!fullscreen) return;
     fullscreen = false;
+    if (!fromBack && history.state && history.state.huddleFullscreen) { try { history.back(); } catch {} }
     els.call.classList.remove("fullscreen", "show-ui");
     clearTimeout(uiTimer);
     for (const p of peers.values()) p.tile.el.classList.remove("focused");
-    try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch {}
     requestAnimationFrame(layoutGrid);
   }
   fsBtn.onclick = (e) => { e.stopPropagation(); enterFullscreen(); };
@@ -1203,7 +1203,8 @@
     if (els.call.classList.contains("show-ui")) { els.call.classList.remove("show-ui"); clearTimeout(uiTimer); }
     else showUi();
   });
-  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && fullscreen) exitFullscreen(); });
+  // Android back gesture/button leaves full screen instead of leaving the page.
+  window.addEventListener("popstate", () => { if (fullscreen) exitFullscreen(true); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fullscreen) exitFullscreen(); });
 
   // Hook for the future game layer: #gameArea is the mount point.
