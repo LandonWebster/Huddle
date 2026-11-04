@@ -124,6 +124,7 @@ input:focus { border-color: var(--accent); }
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; font-weight: 600; white-space: nowrap;
 }
 .steps .key svg { width: 16px; height: 16px; color: #3b82f6; }
+.open-chrome { display: block; text-align: center; text-decoration: none; color: #fff; }
 .sheet-note { color: var(--muted); font-size: 13px; margin: 0; }
 .sheet-actions { display: flex; flex-direction: column; gap: 8px; }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }

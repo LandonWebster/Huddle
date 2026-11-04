@@ -918,11 +918,13 @@
         `Tap the ${DOTS_V} three dots`,
         `Tap ${key(ICON.install, "Install")} or ${key("", "Add to Home screen")}`,
       ], note: notSeen };
+      // Chrome on Android. Links opened from other apps (Messages, Instagram, Discord, Snapchat...)
+      // often open in that app's built-in browser, which can't install apps. Chrome itself can.
       return { steps: [
-        `Tap the ${DOTS_V} three dots at the top right`,
-        `Tap ${key(ICON.addHome, "Add to Home screen")}`,
-        `Tap ${key("", "Install")}`,
-      ], note: notSeen };
+        `If this opened inside another app, tap ${DOTS_V} and choose ${key("", "Open in Chrome")} first`,
+        `In Chrome, tap ${DOTS_V} at the top right`,
+        `Tap ${key(ICON.install, "Install app")} (or ${key(ICON.addHome, "Add to Home screen")}, then ${key("", "Install")})`,
+      ], openInChrome: true };
     }
     // Computers
     if (browser === "edge") return { steps: [
@@ -956,10 +958,16 @@
       return;
     }
     sheetInstall.hidden = true;
-    const { steps, note } = installSteps();
+    const { steps, note, openInChrome } = installSteps();
     sheetBody.innerHTML =
+      (openInChrome ? `<a class="btn primary open-chrome" href="${chromeIntent()}">Open in Chrome to install</a>` : "") +
       (steps.length ? `<ol class="steps">${steps.map((t) => `<li><span>${t}</span></li>`).join("")}</ol>` : "") +
       (note ? `<p class="sheet-note">${note}</p>` : "");
+  }
+  // Android link that opens this exact page in the Chrome app, even from another app's browser.
+  function chromeIntent() {
+    const u = new URL(location.href);
+    return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(u.href)};end`;
   }
   function openSheet() {
     renderSheet();
