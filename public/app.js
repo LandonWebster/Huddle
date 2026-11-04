@@ -1,0 +1,898 @@
+// Huddle client: lobby, in-call UI, and WebRTC mesh calling.
+// Every person connects directly to every other person (good up to ~8 people).
+(() => {
+  "use strict";
+
+  // ---------- Icons ----------
+  const I = {
+    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>',
+    micOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 9.3V5a3 3 0 0 0-5.9-.7M9 9v3a3 3 0 0 0 5.1 2.1M19 10a7 7 0 0 1-1.2 3.9M5 10a7 7 0 0 0 11 5.7M12 17v5M3 3l18 18"/></svg>',
+    cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>',
+    camOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1m4 0h5a2 2 0 0 1 2 2v3.3l6-3.3v10M3 3l18 18"/></svg>',
+    flip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h3l2-3h8l2 3h3v13H3z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2M14 9v2h-2M10 17v-2h2"/></svg>',
+    game: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M15 12h.01M18 13.5h.01"/></svg>',
+    speaker: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
+    speakerOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>',
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
+    hangup: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 9c-3.4 0-6.6 1.1-9.2 3.1-.5.4-.7 1-.6 1.6l.5 2.4c.1.7.8 1.1 1.5 1l3.2-.6c.6-.1 1-.6 1-1.2l.1-2.1c1.1-.4 2.3-.6 3.5-.6s2.4.2 3.5.6l.1 2.1c0 .6.5 1.1 1 1.2l3.2.6c.7.1 1.4-.3 1.5-1l.5-2.4c.1-.6-.1-1.2-.6-1.6C18.6 10.1 15.4 9 12 9z"/></svg>',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    lobby: $("lobby"), call: $("call"),
+    previewVideo: $("previewVideo"), previewOff: $("previewOff"), previewAvatar: $("previewAvatar"), previewMsg: $("previewMsg"),
+    pMic: $("pMic"), pCam: $("pCam"),
+    nameInput: $("nameInput"), startBtn: $("startBtn"), joinForm: $("joinForm"), codeInput: $("codeInput"), lobbyError: $("lobbyError"),
+    roomCode: $("roomCode"), peopleCount: $("peopleCount"), inviteBtn: $("inviteBtn"),
+    grid: $("grid"), gamePanel: $("gamePanel"), closeGame: $("closeGame"),
+    micBtn: $("micBtn"), camBtn: $("camBtn"), flipBtn: $("flipBtn"), gameBtn: $("gameBtn"), leaveBtn: $("leaveBtn"),
+    toast: $("toast"),
+    speakerBtn: $("speakerBtn"), volumePop: $("volumePop"), silentToggle: $("silentToggle"),
+    masterVol: $("masterVol"), masterVolOut: $("masterVolOut"), peerVols: $("peerVols"),
+    chatBtn: $("chatBtn"), chatBadge: $("chatBadge"), chatPanel: $("chatPanel"), closeChat: $("closeChat"),
+    chatList: $("chatList"), chatEmpty: $("chatEmpty"), chatForm: $("chatForm"), chatInput: $("chatInput"), chatSend: $("chatSend"),
+  };
+  els.chatBtn.insertAdjacentHTML("afterbegin", I.chat);
+  els.flipBtn.innerHTML = I.flip;
+  els.gameBtn.innerHTML = I.game;
+  els.leaveBtn.innerHTML = I.hangup;
+
+  // ---------- State ----------
+  const local = {
+    stream: new MediaStream(),
+    micOn: true,
+    camOn: true,
+    facing: "user",
+  };
+  let config = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }], maxPerRoom: 8 };
+  let ws = null;
+  let myId = null;
+  let room = null;
+  let leaving = false;
+  const peers = new Map(); // id -> { pc, name, state, stream, tile, polite, pending: [] }
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  fetch("/config").then((r) => r.json()).then((c) => (config = c)).catch(() => {});
+
+  // ---------- Helpers ----------
+  function toast(msg, ms = 2200) {
+    els.toast.textContent = msg;
+    els.toast.classList.add("show");
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => els.toast.classList.remove("show"), ms);
+  }
+  const initials = (n) => (n || "?").trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
+  const randomCode = () => {
+    const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let s = "";
+    const r = crypto.getRandomValues(new Uint8Array(6));
+    for (const b of r) s += a[b % a.length];
+    return s;
+  };
+  const cleanCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  const myName = () => els.nameInput.value.trim() || "Guest";
+  const track = (kind) => local.stream.getTracks().find((t) => t.kind === kind) || null;
+
+  // ---------- What you hear ----------
+  // Silent mode and volume only change what YOU hear. Your mic is separate.
+  // The app has no beeps or alert sounds; the only audio is other people's voices.
+  const sound = {
+    silent: store.get("huddle:silent") === "1",
+    master: Math.min(1, Math.max(0, Number(store.get("huddle:volume") ?? 1))),
+    per: new Map(), // peer id -> 0..1
+  };
+  if (!Number.isFinite(sound.master)) sound.master = 1;
+  // iPhones/iPads ignore <video>.volume, so there we route audio through a gain node.
+  const elementVolumeWorks = (() => {
+    try { const v = document.createElement("video"); v.volume = 0.5; return v.volume === 0.5; } catch { return false; }
+  })();
+
+  function effectiveVolume(id) {
+    if (sound.silent) return 0;
+    return sound.master * (sound.per.has(id) ? sound.per.get(id) : 1);
+  }
+  function applyVolume(p) {
+    if (!p || !p.pc) return;
+    const vol = effectiveVolume(p.id);
+    const v = p.tile.video;
+    if (p.gain) {
+      v.muted = true;
+      p.gain.gain.value = vol;
+    } else {
+      v.muted = vol === 0;
+      v.volume = vol;
+    }
+  }
+  function applyAllVolumes() {
+    for (const p of peers.values()) applyVolume(p);
+    setCtl(els.speakerBtn, !sound.silent && sound.master > 0, I.speaker, I.speakerOff);
+    els.volumePop.classList.toggle("silent", sound.silent);
+    els.silentToggle.checked = sound.silent;
+    els.masterVol.value = String(Math.round(sound.master * 100));
+    els.masterVolOut.textContent = `${Math.round(sound.master * 100)}%`;
+  }
+  function routeThroughGain(p) {
+    if (elementVolumeWorks || p.gain || !audioCtx) return;
+    try {
+      const src = audioCtx.createMediaStreamSource(p.stream);
+      const gain = audioCtx.createGain();
+      src.connect(gain).connect(audioCtx.destination);
+      p.gain = gain;
+      p.gainSrc = src;
+    } catch {}
+  }
+
+  function renderPeerVolumes() {
+    els.peerVols.textContent = "";
+    for (const p of peers.values()) {
+      if (!p.pc) continue;
+      const row = document.createElement("div");
+      row.className = "vol-row";
+      const name = document.createElement("span");
+      name.textContent = p.name;
+      const range = document.createElement("input");
+      range.type = "range"; range.min = "0"; range.max = "100";
+      range.id = `vol-${p.id}`;
+      range.setAttribute("aria-label", `Volume for ${p.name}`);
+      const pct = Math.round((sound.per.has(p.id) ? sound.per.get(p.id) : 1) * 100);
+      range.value = String(pct);
+      const out = document.createElement("output");
+      out.textContent = `${pct}%`;
+      range.oninput = () => {
+        sound.per.set(p.id, Number(range.value) / 100);
+        out.textContent = `${range.value}%`;
+        applyVolume(p);
+      };
+      row.append(name, range, out);
+      els.peerVols.append(row);
+    }
+  }
+  function toggleVolumePop(show) {
+    if (show) { renderPeerVolumes(); openPanel(window.innerWidth <= 760 ? null : currentPanel); }
+    els.volumePop.hidden = !show;
+    els.speakerBtn.setAttribute("aria-expanded", String(show));
+  }
+  els.speakerBtn.onclick = (e) => { e.stopPropagation(); toggleVolumePop(els.volumePop.hidden); };
+  els.volumePop.onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", () => { if (!els.volumePop.hidden) toggleVolumePop(false); });
+  els.silentToggle.onchange = () => {
+    sound.silent = els.silentToggle.checked;
+    store.set("huddle:silent", sound.silent ? "1" : "0");
+    applyAllVolumes();
+    toast(sound.silent ? "Silent mode on. You won't hear anything." : "Sound is back on");
+  };
+  els.masterVol.oninput = () => {
+    sound.master = Number(els.masterVol.value) / 100;
+    store.set("huddle:volume", String(sound.master));
+    applyAllVolumes();
+  };
+
+  // ---------- Video quality ----------
+  // Every person sends a separate copy of their video to each other person, so quality
+  // steps down as the call grows to keep everyone's upload smooth.
+  const PROFILES = [
+    { upTo: 2, width: 1280, height: 720, fps: 60, kbps: 4000 }, // 1-on-1: 720p at 60fps
+    { upTo: 4, width: 1280, height: 720, fps: 30, kbps: 1500 }, // 3-4 people: 720p at 30fps
+    { upTo: Infinity, width: 640, height: 360, fps: 24, kbps: 600 }, // 5-8 people: 360p
+  ];
+  function profile() {
+    const people = room ? [...peers.keys()].length : 1; // includes yourself
+    return PROFILES.find((q) => people <= q.upTo);
+  }
+  function videoConstraints(q) {
+    return { width: { ideal: q.width }, height: { ideal: q.height }, frameRate: { ideal: q.fps, max: q.fps } };
+  }
+  let appliedProfile = null;
+  async function applyQuality(force) {
+    const q = profile();
+    const vt = track("video");
+    if (vt && (force || q !== appliedProfile)) {
+      vt.contentHint = "motion";
+      // Prefer keeping full 720p and dropping to the camera's best frame rate (often 30)
+      // over a lower resolution at 60fps. Cameras that can't do 720p get their best size.
+      try { await vt.applyConstraints({ ...videoConstraints(q), height: { min: q.height, ideal: q.height } }); }
+      catch { try { await vt.applyConstraints(videoConstraints(q)); } catch {} }
+    }
+    appliedProfile = q;
+    for (const p of peers.values()) if (p.pc) applySenderQuality(p.pc, q);
+  }
+  async function applySenderQuality(pc, q) {
+    const t = transceiverFor(pc, "video");
+    if (!t) return;
+    try {
+      const params = t.sender.getParameters();
+      if (!params.encodings || !params.encodings.length) return; // not negotiated yet
+      params.encodings[0].maxBitrate = q.kbps * 1000;
+      params.encodings[0].maxFramerate = q.fps;
+      if (q.fps >= 60) params.degradationPreference = "maintain-framerate";
+      else params.degradationPreference = "balanced";
+      await t.sender.setParameters(params);
+    } catch (e) { console.warn("quality setting failed", e); }
+  }
+
+  // ---------- Local media ----------
+  async function getTrack(kind) {
+    const constraints = kind === "audio"
+      ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
+      : { video: { facingMode: local.facing, ...videoConstraints(profile()) } };
+    const s = await navigator.mediaDevices.getUserMedia(constraints);
+    return s.getTracks()[0];
+  }
+
+  // Put a new local track in place (or remove it) and send it to everyone without renegotiating.
+  function setLocalTrack(kind, newTrack) {
+    const old = track(kind);
+    if (old) { old.stop(); local.stream.removeTrack(old); }
+    if (newTrack) local.stream.addTrack(newTrack);
+    if (newTrack && kind === "video") { newTrack.contentHint = "motion"; applyQuality(true); }
+    for (const p of peers.values()) {
+      if (!p.pc) continue;
+      const t = transceiverFor(p.pc, kind);
+      if (t) t.sender.replaceTrack(newTrack).catch(() => {});
+    }
+    refreshLocalVideo();
+  }
+
+  function transceiverFor(pc, kind) {
+    return pc.getTransceivers().find((t) => (t.receiver.track && t.receiver.track.kind) === kind);
+  }
+
+  async function setMic(on) {
+    if (on && !track("audio")) {
+      try { setLocalTrack("audio", await getTrack("audio")); }
+      catch (e) { toast(mediaError(e, "microphone")); on = false; }
+    }
+    local.micOn = on;
+    const t = track("audio");
+    if (t) t.enabled = on; // keep the mic track alive so unmuting is instant
+    renderLocalState();
+  }
+
+  async function setCam(on) {
+    if (on) {
+      if (!track("video")) {
+        try { setLocalTrack("video", await getTrack("video")); }
+        catch (e) { toast(mediaError(e, "camera")); on = false; }
+      }
+    } else {
+      setLocalTrack("video", null); // fully release the camera so its light turns off
+    }
+    local.camOn = on && !!track("video");
+    renderLocalState();
+  }
+
+  async function flipCamera() {
+    local.facing = local.facing === "user" ? "environment" : "user";
+    if (!local.camOn) return;
+    try { setLocalTrack("video", await getTrack("video")); }
+    catch (e) { local.facing = local.facing === "user" ? "environment" : "user"; toast("Couldn't switch camera"); }
+    renderLocalState();
+  }
+
+  function mediaError(e, what) {
+    if (e && e.name === "NotAllowedError") return `Allow ${what} access in your browser settings`;
+    if (e && e.name === "NotFoundError") return `No ${what} found`;
+    if (!window.isSecureContext) return `Calls need https to use the ${what}`;
+    return `Couldn't start the ${what}`;
+  }
+
+  async function detectFlip() {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      els.flipBtn.hidden = devs.filter((d) => d.kind === "videoinput").length < 2;
+    } catch { els.flipBtn.hidden = true; }
+  }
+
+  function refreshLocalVideo() {
+    const v = track("video") ? new MediaStream([track("video")]) : null;
+    els.previewVideo.srcObject = v;
+    const self = peers.get("self");
+    if (self) self.tile.video.srcObject = v;
+  }
+
+  // ---------- Lobby ----------
+  function renderLobbyButtons() {
+    setCtl(els.pMic, local.micOn, I.mic, I.micOff);
+    setCtl(els.pCam, local.camOn, I.cam, I.camOff);
+    els.previewOff.hidden = local.camOn;
+    els.previewAvatar.textContent = initials(myName());
+  }
+  function setCtl(btn, on, onIcon, offIcon) {
+    btn.innerHTML = on ? onIcon : offIcon;
+    btn.classList.toggle("off", !on);
+    btn.setAttribute("aria-pressed", String(!on));
+  }
+
+  function renderLocalState() {
+    renderLobbyButtons();
+    setCtl(els.micBtn, local.micOn, I.mic, I.micOff);
+    setCtl(els.camBtn, local.camOn, I.cam, I.camOff);
+    const self = peers.get("self");
+    if (self) {
+      self.tile.el.classList.toggle("cam-off", !local.camOn);
+      self.tile.el.classList.toggle("mic-muted", !local.micOn);
+      self.tile.el.classList.toggle("rear", local.facing === "environment");
+    }
+    sendState();
+  }
+
+  async function initPreview() {
+    els.nameInput.value = store.get("huddle:name") || "";
+    const m = location.pathname.match(/^\/r\/([A-Za-z0-9]+)/);
+    if (m) els.codeInput.value = cleanCode(m[1]);
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      local.micOn = local.camOn = false;
+      els.previewMsg.textContent = window.isSecureContext ? "This browser can't do calls" : "Open this page over https to use camera/mic";
+      renderLobbyButtons();
+      return;
+    }
+    // Ask for both at once so there's a single permission prompt.
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: { facingMode: "user", ...videoConstraints(profile()) },
+      });
+      s.getTracks().forEach((t) => local.stream.addTrack(t));
+    } catch {
+      // Maybe only one device is available or allowed; try them separately.
+      try { local.stream.addTrack(await getTrack("audio")); } catch { local.micOn = false; }
+      try { local.stream.addTrack(await getTrack("video")); } catch { local.camOn = false; els.previewMsg.textContent = "Camera unavailable"; }
+    }
+    refreshLocalVideo();
+    applyQuality(true);
+    detectFlip();
+    renderLobbyButtons();
+  }
+
+  els.pMic.onclick = () => setMic(!local.micOn);
+  els.pCam.onclick = () => setCam(!local.camOn);
+  els.nameInput.oninput = renderLobbyButtons;
+  els.startBtn.onclick = () => joinRoom(randomCode());
+  els.joinForm.onsubmit = (e) => {
+    e.preventDefault();
+    const code = cleanCode(els.codeInput.value);
+    if (!code) { els.lobbyError.textContent = "Enter a room code"; return; }
+    joinRoom(code);
+  };
+
+  // ---------- Signaling ----------
+  function joinRoom(code) {
+    els.lobbyError.textContent = "";
+    // Start audio during the tap; phones only allow audio that starts from a tap.
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx.resume();
+    } catch {}
+    store.set("huddle:name", myName());
+    leaving = false;
+    els.startBtn.disabled = true;
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => ws.send(JSON.stringify({ type: "join", room: code, name: myName(), state: myState() }));
+    ws.onmessage = (ev) => onSignal(JSON.parse(ev.data));
+    ws.onclose = () => {
+      els.startBtn.disabled = false;
+      if (room && !leaving) {
+        if (away) {
+          // The phone dropped the connection while locked. Rejoin when they come back.
+          rejoinCode = room;
+          leaveRoom();
+        } else {
+          toast("Lost connection to the call");
+          leaveRoom();
+        }
+      }
+    };
+    ws.onerror = () => {
+      if (!room) els.lobbyError.textContent = navigator.onLine === false
+        ? "You're offline. Connect to the internet to join a call."
+        : "Couldn't reach the call server";
+    };
+  }
+
+  const myState = () => ({ mic: local.micOn, cam: local.camOn });
+  function sendState() {
+    if (ws && ws.readyState === 1 && room) ws.send(JSON.stringify({ type: "state", state: myState() }));
+  }
+  function signal(to, data) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "signal", to, data }));
+  }
+
+  async function onSignal(msg) {
+    switch (msg.type) {
+      case "joined":
+        myId = msg.id;
+        room = msg.room;
+        enterCallUI();
+        // The newcomer calls everyone already in the room.
+        for (const p of msg.peers) createPeer(p.id, p.name, p.state, true);
+        updateCount();
+        for (const m of msg.chat || []) addChat(m, false);
+        break;
+      case "peer-joined":
+        createPeer(msg.id, msg.name, msg.state, false);
+        updateCount();
+        if (!els.volumePop.hidden) renderPeerVolumes();
+        toast(`${msg.name} joined`);
+        break;
+      case "peer-left": {
+        const p = peers.get(msg.id);
+        if (p) { toast(`${p.name} left`); removePeer(msg.id); }
+        break;
+      }
+      case "peer-state": {
+        const p = peers.get(msg.id);
+        if (p) { p.state = msg.state; renderPeerState(p); }
+        break;
+      }
+      case "chat":
+        addChat(msg, true);
+        break;
+      case "signal":
+        handleRtc(msg.from, msg.data);
+        break;
+      case "error":
+        els.startBtn.disabled = false;
+        els.lobbyError.textContent = msg.reason === "room_full" ? `That room is full (max ${msg.max})` : "Couldn't join that room";
+        leaving = true;
+        ws.close();
+        break;
+    }
+  }
+
+  // ---------- WebRTC ----------
+  function createPeer(id, name, state, initiator) {
+    if (peers.has(id)) removePeer(id);
+    const pc = new RTCPeerConnection({ iceServers: config.iceServers });
+    const p = { id, pc, name, state: state || {}, stream: new MediaStream(), pending: [], initiator, tile: null, silentTracks: {} };
+    peers.set(id, p);
+    p.tile = makeTile(name, false);
+    p.tile.video.srcObject = p.stream;
+    applyVolume(p);
+    renderPeerState(p);
+    setStatus(p, "Connecting…");
+    layoutGrid();
+
+    pc.onicecandidate = (e) => { if (e.candidate) signal(id, { candidate: e.candidate }); };
+    pc.ontrack = (e) => {
+      p.stream.addTrack(e.track);
+      // If their phone stops sending (locked, app switched, frozen), show them as off
+      // even if their "I'm muted" message never arrived.
+      const kind = e.track.kind;
+      e.track.onmute = () => { p.silentTracks[kind] = true; renderPeerState(p); };
+      e.track.onunmute = () => { p.silentTracks[kind] = false; renderPeerState(p); };
+      p.tile.video.srcObject = p.stream;
+      p.tile.video.play().catch(() => {});
+      if (e.track.kind === "audio") {
+        routeThroughGain(p);
+        watchSpeaking(p.stream, p.tile.el);
+      }
+      applyVolume(p);
+    };
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      if (s === "connected") { setStatus(p, ""); applySenderQuality(pc, profile()); }
+      else if (s === "connecting" || s === "new") setStatus(p, "Connecting…");
+      else if (s === "disconnected") setStatus(p, "Reconnecting…");
+      else if (s === "failed") {
+        setStatus(p, "Connection trouble…");
+        if (p.initiator) makeOffer(p, true);
+      }
+    };
+
+    if (initiator) {
+      // Always create both an audio and a video slot so turning the camera/mic on later
+      // just swaps the track in, with no renegotiation.
+      for (const kind of ["audio", "video"]) {
+        const t = track(kind);
+        pc.addTransceiver(t || kind, { direction: "sendrecv", streams: [local.stream] });
+      }
+      makeOffer(p, false);
+    }
+    return p;
+  }
+
+  async function makeOffer(p, iceRestart) {
+    try {
+      const offer = await p.pc.createOffer({ iceRestart });
+      await p.pc.setLocalDescription(offer);
+      signal(p.id, { sdp: p.pc.localDescription });
+    } catch (e) { console.warn("offer failed", e); }
+  }
+
+  async function handleRtc(from, data) {
+    const p = peers.get(from);
+    if (!p) return;
+    const pc = p.pc;
+    try {
+      if (data.sdp) {
+        await pc.setRemoteDescription(data.sdp);
+        if (data.sdp.type === "offer") {
+          for (const t of pc.getTransceivers()) {
+            t.direction = "sendrecv";
+            const kind = t.receiver.track.kind;
+            const lt = track(kind);
+            if (lt && t.sender.track !== lt) await t.sender.replaceTrack(lt);
+            try { t.sender.setStreams && t.sender.setStreams(local.stream); } catch {}
+          }
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          signal(from, { sdp: pc.localDescription });
+        }
+        for (const c of p.pending.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      } else if (data.candidate) {
+        if (pc.remoteDescription) await pc.addIceCandidate(data.candidate).catch(() => {});
+        else p.pending.push(data.candidate);
+      }
+    } catch (e) { console.warn("signal handling failed", e); }
+  }
+
+  function removePeer(id) {
+    const p = peers.get(id);
+    if (!p) return;
+    try { p.pc && p.pc.close(); } catch {}
+    p.tile.el.remove();
+    if (p.tile.stopSpeaking) p.tile.stopSpeaking();
+    if (p.gainSrc) try { p.gainSrc.disconnect(); p.gain.disconnect(); } catch {}
+    peers.delete(id);
+    sound.per.delete(id);
+    if (!els.volumePop.hidden) renderPeerVolumes();
+    updateCount();
+    layoutGrid();
+  }
+
+  // ---------- Tiles ----------
+  function makeTile(name, isSelf) {
+    const el = document.createElement("div");
+    el.className = "tile" + (isSelf ? " self" : "");
+    const video = document.createElement("video");
+    video.autoplay = true;
+    video.playsInline = true;
+    if (isSelf) video.muted = true;
+    const avatarWrap = document.createElement("div");
+    avatarWrap.className = "avatar-wrap";
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = initials(name);
+    avatarWrap.append(avatar);
+    const label = document.createElement("div");
+    label.className = "label";
+    const mic = document.createElement("span");
+    mic.className = "mic-off";
+    mic.innerHTML = I.micOff;
+    const nm = document.createElement("span");
+    nm.textContent = isSelf ? `${name} (you)` : name;
+    label.append(mic, nm);
+    const status = document.createElement("div");
+    status.className = "status";
+    el.append(video, avatarWrap, label, status);
+    els.grid.append(el);
+    return { el, video, status };
+  }
+
+  function setStatus(p, text) { p.tile.status.textContent = text; }
+
+  function renderPeerState(p) {
+    const st = p.silentTracks || {};
+    p.tile.el.classList.toggle("cam-off", !p.state.cam || !!st.video);
+    p.tile.el.classList.toggle("mic-muted", !p.state.mic);
+  }
+
+  function layoutGrid() {
+    const n = els.grid.children.length || 1;
+    const w = els.grid.clientWidth || window.innerWidth;
+    const h = els.grid.clientHeight || window.innerHeight;
+    // Pick the column count that makes tiles as large as possible (tiles ~4:3).
+    let best = 1, bestArea = 0;
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols);
+      const tw = w / cols, th = h / rows;
+      const tileW = Math.min(tw, th * 4 / 3);
+      const area = tileW * (tileW * 3 / 4);
+      if (area > bestArea) { bestArea = area; best = cols; }
+    }
+    els.grid.style.setProperty("--cols", best);
+    els.grid.style.gridTemplateRows = `repeat(${Math.ceil(n / best)}, minmax(0, 1fr))`;
+  }
+  window.addEventListener("resize", layoutGrid);
+
+  // If someone's video stops arriving (their phone locked and paused the page, or froze),
+  // show their avatar instead of a frozen picture, even if they never told us.
+  setInterval(async () => {
+    for (const p of peers.values()) {
+      if (!p.pc || p.pc.connectionState !== "connected") continue;
+      try {
+        let frames = null;
+        (await p.pc.getStats()).forEach((r) => {
+          if (r.type === "inbound-rtp" && r.kind === "video") frames = r.framesDecoded || 0;
+        });
+        if (frames === null) continue;
+        const stalled = frames === p.lastFrames;
+        p.lastFrames = frames;
+        p.stallCount = stalled ? (p.stallCount || 0) + 1 : 0;
+        const paused = p.stallCount >= 2; // ~3 seconds with no new frames
+        if (paused !== !!p.silentTracks.video) { p.silentTracks.video = paused; renderPeerState(p); }
+      } catch {}
+    }
+  }, 1500);
+
+  function updateCount() {
+    els.peopleCount.textContent = String(peers.size);
+    applyQuality(false);
+  }
+
+  // Speaking indicator: glow the tile when someone's audio level is up.
+  let audioCtx = null;
+  function watchSpeaking(stream, el) {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const an = audioCtx.createAnalyser();
+      an.fftSize = 512;
+      src.connect(an);
+      const buf = new Uint8Array(an.fftSize);
+      let hold = 0;
+      const timer = setInterval(() => {
+        an.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (const v of buf) sum += (v - 128) * (v - 128);
+        const rms = Math.sqrt(sum / buf.length);
+        if (rms > 6) hold = 4; else if (hold > 0) hold--;
+        el.classList.toggle("speaking", hold > 0);
+      }, 100);
+      const tileRef = [...peers.values()].find((p) => p.tile.el === el);
+      if (tileRef) tileRef.tile.stopSpeaking = () => { clearInterval(timer); src.disconnect(); };
+    } catch {}
+  }
+
+  // ---------- Call screen ----------
+  function enterCallUI() {
+    els.lobby.hidden = true;
+    els.call.hidden = false;
+    els.roomCode.textContent = room;
+    history.replaceState(null, "", `/r/${room}`);
+    const self = { id: "self", name: myName(), tile: makeTile(myName(), true), pc: null };
+    peers.set("self", self);
+    refreshLocalVideo();
+    const at = track("audio");
+    if (at) watchSpeaking(new MediaStream([at]), self.tile.el);
+    renderLocalState();
+    applyAllVolumes();
+    layoutGrid();
+    updateCount();
+  }
+
+  function leaveRoom() {
+    leaving = true;
+    for (const id of [...peers.keys()]) removePeer(id);
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    room = null;
+    myId = null;
+    els.call.hidden = true;
+    els.lobby.hidden = false;
+    openPanel(null);
+    toggleVolumePop(false);
+    clearChat();
+    els.startBtn.disabled = false;
+    history.replaceState(null, "", "/");
+    refreshLocalVideo();
+  }
+
+  els.micBtn.onclick = () => setMic(!local.micOn);
+  els.camBtn.onclick = () => setCam(!local.camOn);
+  els.flipBtn.onclick = flipCamera;
+  els.leaveBtn.onclick = leaveRoom;
+  // One side panel at a time: chat or game.
+  let currentPanel = null;
+  function openPanel(name) {
+    currentPanel = name;
+    els.chatPanel.hidden = name !== "chat";
+    els.gamePanel.hidden = name !== "game";
+    els.chatBtn.classList.toggle("on-accent", name === "chat");
+    els.gameBtn.classList.toggle("on-accent", name === "game");
+    if (name === "chat") {
+      unread = 0;
+      renderBadge();
+      els.chatList.scrollTop = els.chatList.scrollHeight;
+    } else if (document.activeElement === els.chatInput) {
+      els.chatInput.blur();
+    }
+    requestAnimationFrame(layoutGrid);
+  }
+  els.gameBtn.onclick = () => openPanel(currentPanel === "game" ? null : "game");
+  els.closeGame.onclick = () => openPanel(null);
+  els.chatBtn.onclick = () => {
+    const opening = currentPanel !== "chat";
+    openPanel(opening ? "chat" : null);
+    // On computers, jump straight into typing. On phones, wait for a tap on the box
+    // so the keyboard doesn't pop up unexpectedly.
+    if (opening && window.matchMedia("(hover: hover) and (pointer: fine)").matches) els.chatInput.focus();
+  };
+  els.closeChat.onclick = () => openPanel(null);
+
+  // ---------- Chat ----------
+  let unread = 0;
+  function renderBadge() {
+    els.chatBadge.hidden = unread === 0;
+    els.chatBadge.textContent = unread > 9 ? "9+" : String(unread);
+  }
+  function addChat(m, live) {
+    const mine = m.from === myId;
+    els.chatEmpty.hidden = true;
+    const li = document.createElement("li");
+    li.className = "msg" + (mine ? " mine" : "");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const who = document.createElement("b");
+    who.textContent = mine ? "You" : m.name;
+    const time = document.createElement("time");
+    const d = new Date(m.ts);
+    time.dateTime = d.toISOString();
+    time.textContent = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    meta.append(who, time);
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = m.text;
+    li.append(meta, bubble);
+    const atBottom = els.chatList.scrollHeight - els.chatList.scrollTop - els.chatList.clientHeight < 60;
+    els.chatList.append(li);
+    if (atBottom || mine) els.chatList.scrollTop = els.chatList.scrollHeight;
+    if (live && !mine && currentPanel !== "chat") {
+      unread++;
+      renderBadge();
+      toast(`${m.name}: ${m.text.length > 60 ? m.text.slice(0, 60) + "…" : m.text}`, 3000);
+    }
+  }
+  function clearChat() {
+    for (const li of [...els.chatList.querySelectorAll(".msg")]) li.remove();
+    els.chatEmpty.hidden = false;
+    unread = 0;
+    renderBadge();
+  }
+  const syncSend = () => (els.chatSend.disabled = !els.chatInput.value.trim());
+  els.chatInput.oninput = syncSend;
+  els.chatForm.onsubmit = (e) => {
+    e.preventDefault();
+    const text = els.chatInput.value.trim();
+    if (!text || !ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: "chat", text }));
+    els.chatInput.value = "";
+    syncSend();
+    els.chatInput.focus(); // keep the keyboard open for the next message
+  };
+  syncSend();
+
+  // ---------- Phone keyboard ----------
+  // Keep the call screen sized to the part of the screen the keyboard isn't covering.
+  const root = document.documentElement;
+  function syncViewport() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    root.style.setProperty("--app-h", `${vv.height}px`);
+    root.style.setProperty("--vv-top", `${vv.offsetTop}px`);
+    layoutGrid();
+    if (document.activeElement === els.chatInput) els.chatList.scrollTop = els.chatList.scrollHeight;
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", syncViewport);
+    window.visualViewport.addEventListener("scroll", syncViewport);
+  }
+  els.chatInput.addEventListener("focus", () => { document.body.classList.add("typing"); requestAnimationFrame(syncViewport); });
+  els.chatInput.addEventListener("blur", () => { document.body.classList.remove("typing"); requestAnimationFrame(syncViewport); });
+  els.inviteBtn.onclick = async () => {
+    const link = `${location.origin}/r/${room}`;
+    try {
+      if (navigator.share && /Mobi|Android|iPhone/i.test(navigator.userAgent)) {
+        await navigator.share({ title: "Join my Huddle call", url: link });
+      } else {
+        await navigator.clipboard.writeText(link);
+        toast("Invite link copied");
+      }
+    } catch { toast(link, 5000); }
+  };
+  window.addEventListener("pagehide", () => { if (ws) ws.close(); });
+
+  // ---------- Locking the phone / leaving the app ----------
+  // The call keeps going: mic, camera and sound stay on as long as the phone lets the page run.
+  // (iPhones pause web pages soon after locking; if the call drops, we rejoin on return.)
+  // In the lobby, the camera preview is released while hidden and restored on return.
+  let away = false;
+  let rejoinCode = null;
+  let lobbyRestore = null;
+  function goAway() {
+    if (away) return;
+    away = true;
+    if (!room) {
+      lobbyRestore = { mic: local.micOn, cam: local.camOn };
+      setLocalTrack("audio", null);
+      setLocalTrack("video", null);
+    }
+  }
+  async function comeBack() {
+    if (!away) return;
+    away = false;
+    // iPhones pause videos and audio while locked; start them again.
+    resumeAudio();
+    for (const p of peers.values()) if (p.pc) p.tile.video.play().catch(() => {});
+    // The phone may have stopped the camera/mic while locked; get fresh ones if so.
+    if (room) {
+      for (const kind of ["audio", "video"]) {
+        const t = track(kind);
+        const wanted = kind === "audio" ? local.micOn : local.camOn;
+        if (wanted && (!t || t.readyState === "ended")) {
+          try { setLocalTrack(kind, await getTrack(kind)); if (kind === "audio") track("audio").enabled = local.micOn; } catch {}
+        }
+      }
+    }
+    if (rejoinCode) {
+      const code = rejoinCode;
+      rejoinCode = null;
+      joinRoom(code);
+      toast("Reconnected to the call", 3000);
+    } else if (!room && lobbyRestore) {
+      const r = lobbyRestore;
+      lobbyRestore = null;
+      if (r.mic) await setMic(true);
+      if (r.cam) await setCam(true);
+    }
+  }
+  document.addEventListener("visibilitychange", () => (document.hidden ? goAway() : comeBack()));
+  if (document.hidden) away = true;
+
+  // ---------- Installable app ----------
+  // iPhone Safari suspends audio after interruptions (calls, lock); any tap wakes it back up.
+  function resumeAudio() {
+    try { if (audioCtx && audioCtx.state !== "running") audioCtx.resume(); } catch {}
+  }
+  document.addEventListener("touchend", resumeAudio, { passive: true });
+  document.addEventListener("click", resumeAudio);
+
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+  }
+
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const installBox = $("installBox");
+  const installBtn = $("installBtn");
+  const installHint = $("installHint");
+  let installEvent = null;
+  const installDismissed = () => store.get("huddle:installDismissed") === "1";
+
+  // Android and computers (Chrome, Edge, Samsung Internet): the browser offers a real install prompt.
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    installEvent = e;
+    if (!installDismissed()) installBox.hidden = false;
+  });
+  installBtn.onclick = async () => {
+    if (!installEvent) return;
+    installEvent.prompt();
+    const choice = await installEvent.userChoice.catch(() => null);
+    installEvent = null;
+    installBox.hidden = true;
+    if (choice && choice.outcome === "accepted") toast("Huddle is installed");
+  };
+  window.addEventListener("appinstalled", () => { installBox.hidden = true; });
+  // iPhone and iPad: there's no install prompt, so show the two steps instead.
+  if (isIOS && !isStandalone && !installDismissed()) {
+    installHint.innerHTML = 'Tap <svg class="share-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5M5 12v8h14v-8"/></svg> Share, then <b>Add to Home Screen</b>.';
+    installBtn.hidden = true;
+    installBox.hidden = false;
+  }
+  $("installClose").onclick = () => {
+    installBox.hidden = true;
+    store.set("huddle:installDismissed", "1");
+  };
+
+  // Hook for the future game layer: #gameArea is the mount point.
+  window.huddle = { gameArea: $("gameArea"), peers, get room() { return room; } };
+
+  initPreview();
+})();

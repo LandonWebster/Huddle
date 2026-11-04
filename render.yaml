@@ -1,0 +1,18 @@
+# One-click deploy on Render (New > Blueprint, pick this repo).
+services:
+  - type: web
+    name: huddle
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: MAX_PER_ROOM
+        value: "8"
+      - key: TURN_URL
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false

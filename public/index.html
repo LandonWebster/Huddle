@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0f1020">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Huddle">
+  <meta name="application-name" content="Huddle">
+  <meta name="format-detection" content="telephone=no">
+  <title>Huddle</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- ============ LOBBY ============ -->
+  <main id="lobby" class="screen">
+    <div class="lobby-card">
+      <header class="brand">
+        <img src="/icon.svg" alt="" width="40" height="40">
+        <div>
+          <h1>Huddle</h1>
+          <p>Hop on a call with friends. Games coming soon.</p>
+        </div>
+      </header>
+
+      <div class="preview">
+        <video id="previewVideo" autoplay playsinline muted></video>
+        <div id="previewOff" class="preview-off">
+          <div class="avatar big" id="previewAvatar">?</div>
+          <span id="previewMsg">Camera is off</span>
+        </div>
+        <div class="preview-controls">
+          <button class="ctl" id="pMic" aria-label="Toggle microphone" title="Microphone"></button>
+          <button class="ctl" id="pCam" aria-label="Toggle camera" title="Camera"></button>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="nameInput" maxlength="24" placeholder="e.g. Landon" autocomplete="nickname">
+      </label>
+
+      <button id="startBtn" class="btn primary">Start a new call</button>
+
+      <div class="divider"><span>or join one</span></div>
+
+      <form id="joinForm" class="join-row">
+        <input id="codeInput" maxlength="12" placeholder="Room code" autocapitalize="characters" autocomplete="off" spellcheck="false">
+        <button class="btn" type="submit">Join</button>
+      </form>
+
+      <p id="lobbyError" class="error" role="alert"></p>
+
+      <div id="installBox" class="install-box" hidden>
+        <img src="/icons/icon-192.png" alt="" width="36" height="36">
+        <div class="install-text">
+          <strong>Get the Huddle app</strong>
+          <span id="installHint">Install it for quick access from your home screen.</span>
+        </div>
+        <button class="btn small" id="installBtn" type="button">Install</button>
+        <button class="icon-btn" id="installClose" type="button" aria-label="Not now">✕</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ IN CALL ============ -->
+  <main id="call" class="screen" hidden>
+    <header class="topbar">
+      <div class="room-info">
+        <span class="live-dot"></span>
+        <span>Room <strong id="roomCode">----</strong></span>
+        <span class="count" id="peopleCount">1</span>
+      </div>
+      <button class="btn small" id="inviteBtn">Copy invite link</button>
+    </header>
+
+    <div class="stage">
+      <section id="grid" class="grid" aria-label="Participants"></section>
+
+      <aside id="chatPanel" class="side-panel chat-panel" hidden aria-label="Chat">
+        <div class="panel-head">
+          <strong>Chat</strong>
+          <button class="icon-btn" id="closeChat" aria-label="Close chat">✕</button>
+        </div>
+        <ol id="chatList" class="chat-list" aria-live="polite">
+          <li class="chat-empty" id="chatEmpty">No messages yet. Say hi 👋</li>
+        </ol>
+        <form id="chatForm" class="chat-form" autocomplete="off">
+          <input id="chatInput" maxlength="500" placeholder="Type a message" enterkeyhint="send" aria-label="Message">
+          <button class="send-btn" id="chatSend" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12 2-12 2z"/></svg>
+          </button>
+        </form>
+      </aside>
+
+      <!-- Space reserved for the game. Games will render into #gameArea. -->
+      <aside id="gamePanel" class="side-panel game-panel" hidden>
+        <div class="panel-head">
+          <strong>Game</strong>
+          <button class="icon-btn" id="closeGame" aria-label="Close game panel">✕</button>
+        </div>
+        <div id="gameArea" class="game-area">
+          <div class="game-placeholder">
+            <div class="dice">🎲</div>
+            <p>Games will show up here.</p>
+            <small>Everyone in the call will play together.</small>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div id="volumePop" class="volume-pop" hidden role="dialog" aria-label="Volume">
+      <label class="silent-row">
+        <span>
+          <strong>Silent mode</strong>
+          <small>The app plays no sound at all</small>
+        </span>
+        <input type="checkbox" id="silentToggle" class="switch">
+      </label>
+      <div class="vol-row">
+        <span>Everyone</span>
+        <input type="range" id="masterVol" min="0" max="100" value="100" aria-label="Volume for everyone">
+        <output id="masterVolOut">100%</output>
+      </div>
+      <div id="peerVols" class="peer-vols"></div>
+    </div>
+
+    <nav class="controls" aria-label="Call controls">
+      <button class="ctl" id="micBtn" aria-label="Toggle microphone" title="Microphone"></button>
+      <button class="ctl" id="camBtn" aria-label="Toggle camera" title="Camera"></button>
+      <button class="ctl" id="flipBtn" aria-label="Switch camera" title="Switch camera" hidden></button>
+      <button class="ctl" id="speakerBtn" aria-label="Volume" title="Volume" aria-haspopup="true" aria-expanded="false"></button>
+      <button class="ctl" id="chatBtn" aria-label="Chat" title="Chat"><span class="badge" id="chatBadge" hidden>0</span></button>
+      <button class="ctl" id="gameBtn" aria-label="Show game" title="Game"></button>
+      <button class="ctl hangup" id="leaveBtn" aria-label="Leave call" title="Leave"></button>
+    </nav>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
