@@ -27,6 +27,7 @@
     grid: $("grid"), gamePanel: $("gamePanel"), closeGame: $("closeGame"),
     micBtn: $("micBtn"), camBtn: $("camBtn"), flipBtn: $("flipBtn"), gameBtn: $("gameBtn"), leaveBtn: $("leaveBtn"),
     toast: $("toast"),
+    emptyState: $("emptyState"),
     speakerBtn: $("speakerBtn"), volumePop: $("volumePop"), silentToggle: $("silentToggle"),
     masterVol: $("masterVol"), masterVolOut: $("masterVolOut"), peerVols: $("peerVols"),
     chatBtn: $("chatBtn"), chatBadge: $("chatBadge"), chatPanel: $("chatPanel"), closeChat: $("closeChat"),
@@ -540,6 +541,7 @@
     if (p.gainSrc) try { p.gainSrc.disconnect(); p.gain.disconnect(); } catch {}
     peers.delete(id);
     sound.per.delete(id);
+    if (focusedId === id) setFocus(defaultFocus());
     if (!els.volumePop.hidden) renderPeerVolumes();
     updateCount();
     layoutGrid();
@@ -583,7 +585,9 @@
   }
 
   function layoutGrid() {
-    const n = els.grid.children.length || 1;
+    const visible = els.grid.querySelectorAll(".tile:not(.self-hidden)").length;
+    els.emptyState.hidden = visible > 0 || !room;
+    const n = visible || 1;
     const w = els.grid.clientWidth || window.innerWidth;
     const h = els.grid.clientHeight || window.innerHeight;
     // Pick the column count that makes tiles as large as possible (tiles ~4:3).
@@ -658,6 +662,7 @@
     history.replaceState(null, "", `/r/${room}`);
     const self = { id: "self", name: myName(), tile: makeTile(myName(), true), pc: null };
     peers.set("self", self);
+    renderSelfView();
     refreshLocalVideo();
     const at = track("audio");
     if (at) watchSpeaking(new MediaStream([at]), self.tile.el);
@@ -669,6 +674,7 @@
 
   function leaveRoom() {
     leaving = true;
+    exitFullscreen();
     for (const id of [...peers.keys()]) removePeer(id);
     if (ws) { try { ws.close(); } catch {} ws = null; }
     room = null;
@@ -980,6 +986,102 @@
     // First time someone opens the link, show the popup on its own (once per device).
     if (store.get(SEEN_KEY) !== "1") setTimeout(() => { if (!room) openSheet(); }, 900);
   }
+
+  // ---------- Self view & full screen ----------
+  const VI = {
+    selfOn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    selfOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0M3 3l18 18"/></svg>',
+    expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+    shrink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
+    person: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 6l3 3-3 3M20 9h-5"/></svg>',
+  };
+  const selfBtn = $("selfBtn"), fsBtn = $("fsBtn"), fsControls = $("fsControls"), fsName = $("fsName");
+  $("fsGame").innerHTML = I.game;
+  $("fsFlip").innerHTML = I.flip;
+  $("fsExit").innerHTML = VI.shrink;
+  $("fsPerson").innerHTML = VI.person;
+  fsBtn.innerHTML = VI.expand;
+
+  // You don't see yourself unless you choose to.
+  let showSelf = store.get("huddle:showSelf") === "1";
+  function renderSelfView() {
+    const self = peers.get("self");
+    if (self) self.tile.el.classList.toggle("self-hidden", !showSelf);
+    selfBtn.innerHTML = showSelf ? VI.selfOn : VI.selfOff;
+    selfBtn.classList.toggle("on", showSelf);
+    selfBtn.setAttribute("aria-pressed", String(showSelf));
+    selfBtn.title = showSelf ? "Hide yourself" : "Show yourself";
+    selfBtn.setAttribute("aria-label", selfBtn.title);
+    layoutGrid();
+  }
+  selfBtn.onclick = () => {
+    showSelf = !showSelf;
+    store.set("huddle:showSelf", showSelf ? "1" : "0");
+    renderSelfView();
+  };
+  renderSelfView();
+  $("emptyInvite").onclick = () => els.inviteBtn.click();
+
+  // Full screen: one person fills the screen. Tap anywhere to bring up the controls.
+  let focusedId = null;
+  let fullscreen = false;
+  let uiTimer = null;
+  const order = () => [...peers.keys()].filter((id) => id !== "self").concat("self");
+  const defaultFocus = () => order()[0];
+  function setFocus(id) {
+    focusedId = id;
+    for (const [pid, p] of peers) p.tile.el.classList.toggle("focused", pid === id);
+    const p = peers.get(id);
+    fsName.textContent = p ? (id === "self" ? "You" : p.name) : "";
+  }
+  function showUi() {
+    els.call.classList.add("show-ui");
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(() => els.call.classList.remove("show-ui"), 4000);
+  }
+  function enterFullscreen() {
+    fullscreen = true;
+    setFocus(focusedId && peers.has(focusedId) ? focusedId : defaultFocus());
+    els.call.classList.add("fullscreen");
+    toggleVolumePop(false);
+    if (currentPanel === "chat") openPanel(null);
+    $("fsFlip").hidden = els.flipBtn.hidden;
+    // Real full screen where the browser allows it (Android, computers). iPhone fills the window instead.
+    const el = document.documentElement;
+    try { if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen({ navigationUI: "hide" }).catch(() => {}); } catch {}
+    els.call.classList.remove("show-ui");
+  }
+  function exitFullscreen() {
+    if (!fullscreen) return;
+    fullscreen = false;
+    els.call.classList.remove("fullscreen", "show-ui");
+    clearTimeout(uiTimer);
+    for (const p of peers.values()) p.tile.el.classList.remove("focused");
+    try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch {}
+    requestAnimationFrame(layoutGrid);
+  }
+  fsBtn.onclick = (e) => { e.stopPropagation(); enterFullscreen(); };
+  selfBtn.addEventListener("click", (e) => e.stopPropagation());
+  $("fsExit").onclick = (e) => { e.stopPropagation(); exitFullscreen(); };
+  $("fsFlip").onclick = (e) => { e.stopPropagation(); showUi(); flipCamera(); };
+  $("fsGame").onclick = (e) => {
+    e.stopPropagation(); showUi();
+    openPanel(currentPanel === "game" ? null : "game");
+    $("fsGame").classList.toggle("on", currentPanel === "game");
+  };
+  $("fsPerson").onclick = (e) => {
+    e.stopPropagation(); showUi();
+    const ids = order();
+    setFocus(ids[(ids.indexOf(focusedId) + 1) % ids.length]);
+  };
+  fsControls.addEventListener("click", (e) => e.stopPropagation());
+  $("videoArea").addEventListener("click", (e) => {
+    if (!fullscreen || e.target.closest(".side-panel")) return;
+    if (els.call.classList.contains("show-ui")) { els.call.classList.remove("show-ui"); clearTimeout(uiTimer); }
+    else showUi();
+  });
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && fullscreen) exitFullscreen(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fullscreen) exitFullscreen(); });
 
   // Hook for the future game layer: #gameArea is the mount point.
   window.huddle = { gameArea: $("gameArea"), peers, get room() { return room; } };

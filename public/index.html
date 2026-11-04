@@ -76,7 +76,31 @@
     </header>
 
     <div class="stage">
-      <section id="grid" class="grid" aria-label="Participants"></section>
+      <div class="video-area" id="videoArea">
+        <section id="grid" class="grid" aria-label="Participants"></section>
+
+        <div id="emptyState" class="empty-state" hidden>
+          <div class="avatar big">👋</div>
+          <strong>Waiting for friends to join</strong>
+          <span>Send them the invite link to start talking.</span>
+          <button class="btn small" id="emptyInvite" type="button">Copy invite link</button>
+        </div>
+
+        <!-- Bottom right of the video area: show yourself, go full screen -->
+        <div class="view-controls" id="viewControls">
+          <button class="fab" id="selfBtn" type="button" aria-pressed="false" aria-label="Show yourself" title="Show yourself"></button>
+          <button class="fab" id="fsBtn" type="button" aria-label="Full screen" title="Full screen"></button>
+        </div>
+
+        <!-- Full screen: hidden until you tap the screen -->
+        <div class="fs-name" id="fsName" aria-live="polite"></div>
+        <div class="fs-controls" id="fsControls" role="toolbar" aria-label="Full screen controls">
+          <button class="fab" id="fsGame" type="button" aria-label="Game" title="Game"></button>
+          <button class="fab" id="fsPerson" type="button" aria-label="Switch person" title="Switch person"></button>
+          <button class="fab" id="fsFlip" type="button" aria-label="Switch camera" title="Switch camera"></button>
+          <button class="fab" id="fsExit" type="button" aria-label="Exit full screen" title="Exit full screen"></button>
+        </div>
+      </div>
 
       <aside id="chatPanel" class="side-panel chat-panel" hidden aria-label="Chat">
         <div class="panel-head">

@@ -5,6 +5,8 @@ A web app where friends join a room and talk over live voice + video, with a pan
 ## What's in it
 - **Lobby:** your name, camera/mic preview with on/off toggles, "Start a new call" (makes a room code), or join with a code. Invite links look like `https://your-site/r/ABC123` and drop people straight into that room's join screen.
 - **Call screen:** auto-sizing video grid, name labels, muted icon, avatar when someone's camera is off, glow on whoever is talking, "Connecting…" status per person.
+- **Your own video:** hidden by default. The person button at the bottom right of the videos shows or hides it.
+- **Full screen:** the button at the bottom right of the videos makes one person fill the screen with no buttons on top. Tap anywhere to bring up the controls at the bottom right: exit full screen, switch camera (on phones), switch person (cycles through everyone, including yourself), and game. They hide again after 4 seconds.
 - **Controls:** mute, camera on/off (fully releases the camera), switch front/back camera (phones), volume, chat, game panel, hang up.
 - **Volume:** one slider for everyone plus a slider per person. These only change what you hear.
 - **Silent mode:** turns off all sound from the app. The app has no beeps or alert sounds, so the only audio is people's voices. Your mic is a separate control. Volume and silent mode are remembered on that device.
