@@ -190,7 +190,7 @@
   let appliedProfile = null;
   async function applyQuality(force) {
     const q = profile();
-    const vt = track("video");
+    const vt = local.sharing ? null : track("video");
     if (vt && (force || q !== appliedProfile)) {
       vt.contentHint = "motion";
       // Prefer keeping full 720p and dropping to the camera's best frame rate (often 30)
@@ -229,7 +229,7 @@
     const old = track(kind);
     if (old) { old.stop(); local.stream.removeTrack(old); }
     if (newTrack) local.stream.addTrack(newTrack);
-    if (newTrack && kind === "video") { newTrack.contentHint = "motion"; applyQuality(true); }
+    if (newTrack && kind === "video" && !local.sharing) { newTrack.contentHint = "motion"; applyQuality(true); }
     for (const p of peers.values()) {
       if (!p.pc) continue;
       const t = transceiverFor(p.pc, kind);
@@ -266,11 +266,52 @@
     renderLocalState();
   }
 
+  // Switch between the front and back camera.
+  // Most phones can't open two cameras at once, so the current one is released first,
+  // and the other camera is asked for by name ("exact") so the phone can't hand back the same one.
+  let flipping = false;
   async function flipCamera() {
-    local.facing = local.facing === "user" ? "environment" : "user";
-    if (!local.camOn) return;
-    try { setLocalTrack("video", await getTrack("video")); }
-    catch (e) { local.facing = local.facing === "user" ? "environment" : "user"; toast("Couldn't switch camera"); }
+    if (flipping || local.sharing) return;
+    const target = local.facing === "user" ? "environment" : "user";
+    if (!local.camOn) { local.facing = target; renderLocalState(); return; }
+    flipping = true;
+    const oldId = track("video") && track("video").getSettings().deviceId;
+    setLocalTrack("video", null); // release the current camera
+    const q = videoConstraints(profile());
+    const tries = [
+      { video: { ...q, facingMode: { exact: target } } },
+      async () => {
+        // Some phones ignore facingMode; pick a different camera from the list instead.
+        const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+        const want = target === "environment" ? /back|rear|environment/i : /front|user|face/i;
+        const pick = cams.find((d) => want.test(d.label)) || cams.find((d) => d.deviceId && d.deviceId !== oldId);
+        return pick ? { video: { ...q, deviceId: { exact: pick.deviceId } } } : null;
+      },
+      { video: { ...q, facingMode: target } },
+    ];
+    let newTrack = null;
+    for (const t of tries) {
+      try {
+        const c = typeof t === "function" ? await t() : t;
+        if (!c) continue;
+        const st = await navigator.mediaDevices.getUserMedia(c);
+        newTrack = st.getVideoTracks()[0];
+        if (newTrack && newTrack.getSettings().deviceId && newTrack.getSettings().deviceId === oldId && t !== tries[2]) {
+          newTrack.stop(); newTrack = null; continue; // same camera again, try the next way
+        }
+        if (newTrack) break;
+      } catch {}
+    }
+    if (newTrack) {
+      local.facing = target;
+    } else {
+      // Couldn't get the other camera: put the original one back.
+      toast("Couldn't switch camera");
+      try { newTrack = await getTrack("video"); } catch {}
+    }
+    if (newTrack) setLocalTrack("video", newTrack);
+    else { local.camOn = false; }
+    flipping = false;
     renderLocalState();
   }
 
@@ -281,6 +322,9 @@
     return `Couldn't start the ${what}`;
   }
 
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", () => detectFlip());
+  }
   async function detectFlip() {
     try {
       const devs = await navigator.mediaDevices.enumerateDevices();
@@ -674,6 +718,7 @@
 
   function leaveRoom() {
     leaving = true;
+    if (local.sharing) stopShare();
     exitFullscreen();
     for (const id of [...peers.keys()]) removePeer(id);
     if (ws) { try { ws.close(); } catch {} ws = null; }
@@ -690,8 +735,61 @@
   }
 
   els.micBtn.onclick = () => setMic(!local.micOn);
-  els.camBtn.onclick = () => setCam(!local.camOn);
+  els.camBtn.onclick = async () => {
+    if (local.sharing) { camWasOn = true; await stopShare(); return; }
+    setCam(!local.camOn);
+  };
   els.flipBtn.onclick = flipCamera;
+
+  // ---------- Screen sharing (computers) ----------
+  // Phone browsers (Android and iPhone) don't let web pages share the screen, so the button
+  // only appears where it works: Chrome, Edge, Firefox and Safari on computers.
+  const shareBtn = $("shareBtn");
+  const SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4M12 13V8M9.5 10.5 12 8l2.5 2.5"/></svg>';
+  const canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) &&
+    !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  shareBtn.hidden = !canShare;
+  shareBtn.innerHTML = SHARE_ICON;
+  local.sharing = false;
+  let camWasOn = false;
+  function renderShare() {
+    shareBtn.classList.toggle("on-accent", local.sharing);
+    shareBtn.title = local.sharing ? "Stop sharing" : "Share your screen";
+    shareBtn.setAttribute("aria-label", shareBtn.title);
+    shareBtn.setAttribute("aria-pressed", String(local.sharing));
+    const self = peers.get("self");
+    if (self) self.tile.el.classList.toggle("sharing", local.sharing);
+  }
+  async function startShare() {
+    let screen;
+    try {
+      const st = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: false });
+      screen = st.getVideoTracks()[0];
+    } catch (e) {
+      if (e && e.name !== "NotAllowedError") toast("Couldn't share your screen");
+      return;
+    }
+    camWasOn = local.camOn;
+    local.sharing = true;
+    screen.contentHint = "detail"; // keep text sharp
+    screen.addEventListener("ended", stopShare); // the browser's own "Stop sharing" button
+    setLocalTrack("video", screen);
+    local.camOn = true; // others see your screen in your tile
+    renderShare();
+    renderLocalState();
+    toast("You're sharing your screen");
+  }
+  async function stopShare() {
+    if (!local.sharing) return;
+    local.sharing = false;
+    let cam = null;
+    if (camWasOn) { try { cam = await getTrack("video"); } catch {} }
+    setLocalTrack("video", cam);
+    local.camOn = !!cam;
+    renderShare();
+    renderLocalState();
+  }
+  shareBtn.onclick = () => (local.sharing ? stopShare() : startShare());
   els.leaveBtn.onclick = leaveRoom;
   // One side panel at a time: chat or game.
   let currentPanel = null;
