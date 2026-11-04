@@ -859,7 +859,7 @@
   document.addEventListener("click", resumeAudio);
 
   if ("serviceWorker" in navigator && window.isSecureContext) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
   }
 
   // "Get the app": the popup shows the right install steps for this phone or computer.
@@ -869,7 +869,10 @@
   const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   const browser = (() => {
     if (/SamsungBrowser/i.test(ua)) return "samsung";
-    if (/EdgA?\//.test(ua) || /EdgiOS/.test(ua)) return "edge";
+    if (/EdgA\//.test(ua)) return "edge-android";
+    if (/EdgiOS/.test(ua)) return "edge-ios";
+    if (/Edg\//.test(ua)) return "edge";
+    if (/OPR\/|Opera/.test(ua)) return "opera";
     if (/CriOS/.test(ua)) return "chrome-ios";
     if (/FxiOS/.test(ua)) return "firefox-ios";
     if (/Firefox\//.test(ua)) return "firefox";
@@ -885,6 +888,9 @@
     install: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M12 8v6M9 11l3 3 3-3"/></svg>',
   };
   const key = (icon, label) => `<span class="key">${icon || ""}${label}</span>`;
+  const DOTS_V = key(ICON.dots, "");          // ⋮ three dots, Chrome
+  const DOTS_H = key("", "···");              // ⋯ three dots, Edge
+  const notSeen = "Don't see it? Your browser may not support installing. You can keep using Huddle right here, or open this link in Chrome.";
   function installSteps() {
     // Returns { steps: [...html], note }
     if (isIOS) {
@@ -901,41 +907,45 @@
     }
     if (isAndroid) {
       if (browser === "samsung") return { steps: [
-        `Tap ${key(ICON.menu, "Menu")} at the bottom`,
-        `Tap ${key("", "Add page to")} then ${key("", "Home screen")}`,
-      ] };
+        `Tap the ${key(ICON.menu, "")} three lines at the bottom right`,
+        `Tap ${key("", "Add page to")}, then ${key("", "Home screen")}`,
+      ], note: notSeen };
+      if (browser === "edge-android") return { steps: [
+        `Tap ${DOTS_H} at the bottom of the screen`,
+        `Tap ${key(ICON.addHome, "Add to phone")}`,
+      ], note: notSeen };
       if (browser === "firefox") return { steps: [
-        `Tap ${key(ICON.dots, "Menu")} next to the address bar`,
-        `Tap ${key(ICON.install, "Install")}`,
-      ] };
+        `Tap the ${DOTS_V} three dots`,
+        `Tap ${key(ICON.install, "Install")} or ${key("", "Add to Home screen")}`,
+      ], note: notSeen };
       return { steps: [
-        `Tap ${key(ICON.dots, "Menu")} at the top right`,
-        `Tap ${key(ICON.install, "Install app")} or ${key("", "Add to Home screen")}`,
+        `Tap the ${DOTS_V} three dots at the top right`,
+        `Tap ${key(ICON.addHome, "Add to Home screen")}`,
         `Tap ${key("", "Install")}`,
-      ] };
+      ], note: notSeen };
     }
     // Computers
     if (browser === "edge") return { steps: [
-      `Click ${key("", "···")} at the top right`,
-      `Choose ${key("", "Apps")} then ${key(ICON.install, "Install this site as an app")}`,
-    ] };
-    if (browser === "chrome") return { steps: [
-      `Click the ${key(ICON.install, "Install")} icon at the right end of the address bar`,
-      `Or open ${key(ICON.dots, "Menu")} then ${key("", "Cast, save, and share")} then ${key("", "Install page as app")}`,
-    ] };
+      `Click the ${DOTS_H} three dots at the top right`,
+      `Click ${key("", "Apps")}, then ${key(ICON.install, "Install Huddle")}`,
+    ], note: "You can also click the app icon at the right end of the address bar. Don't see either? Refresh the page and try again." };
+    if (browser === "chrome" || browser === "opera") return { steps: [
+      `Click the ${key(ICON.install, "")} install icon at the right end of the address bar`,
+      `Or click the ${DOTS_V} three dots, then ${key("", "Cast, save, and share")}, then ${key("", "Install page as app")}`,
+    ], note: "Don't see either? Refresh the page and try again." };
     if (browser === "safari") return { steps: [
       `In the menu bar, click ${key("", "File")}`,
-      `Choose ${key(ICON.addHome, "Add to Dock")}`,
+      `Click ${key(ICON.addHome, "Add to Dock")}`,
     ], note: "Needs macOS Sonoma or newer." };
-    if (browser === "firefox") return { steps: [], note: "Firefox can't install web apps. Bookmark this page, or open it in Chrome or Edge to install Huddle as an app. Calls work fine right here in the browser." };
-    return { steps: [], note: "Bookmark this page, or open it in Chrome to install Huddle as an app." };
+    if (browser === "firefox") return { steps: [], note: "Firefox can't install web apps. Huddle works fine right here in the browser, or open this link in Chrome or Edge to install it." };
+    return { steps: [], note: "This browser can't install web apps. Huddle works fine right here, or open this link in Chrome to install it." };
   }
 
   const sheet = $("installSheet");
   const sheetBody = $("sheetBody");
   const sheetInstall = $("sheetInstall");
   const getAppBtn = $("getAppBtn");
-  let installEvent = null;
+  let installEvent = window.__installEvent || null;
   const SEEN_KEY = "huddle:installPromptSeen";
 
   function renderSheet() {
@@ -963,20 +973,27 @@
   sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
   $("sheetLater").onclick = closeSheet;
-  getAppBtn.onclick = openSheet;
-  sheetInstall.onclick = async () => {
-    if (!installEvent) return;
-    installEvent.prompt();
-    const choice = await installEvent.userChoice.catch(() => null);
+  // When the browser offers it, "Get the app" starts the real install right away.
+  async function startInstall() {
+    const ev = installEvent;
+    if (!ev) return false;
     installEvent = null;
-    closeSheet();
-    if (choice && choice.outcome === "accepted") { toast("Huddle is installed"); getAppBtn.hidden = true; }
-  };
+    window.__installEvent = null;
+    try {
+      await ev.prompt();
+      const choice = await ev.userChoice;
+      sheet.hidden = true;
+      store.set(SEEN_KEY, "1");
+      if (choice && choice.outcome === "accepted") { toast("Huddle is installed"); getAppBtn.hidden = true; }
+    } catch { return false; }
+    return true;
+  }
+  getAppBtn.onclick = async () => { if (!(await startInstall())) openSheet(); };
+  sheetInstall.onclick = async () => { if (!(await startInstall())) renderSheet(); };
 
-  // Chrome, Edge and Samsung Internet hand us a real install prompt.
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault();
-    installEvent = e;
+  // Chrome, Edge, Opera and Samsung Internet hand us a real install offer (caught in index.html).
+  window.addEventListener("huddle:installready", () => {
+    installEvent = window.__installEvent;
     if (!sheet.hidden) renderSheet();
   });
   window.addEventListener("appinstalled", () => { getAppBtn.hidden = true; sheet.hidden = true; });
