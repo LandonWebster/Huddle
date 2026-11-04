@@ -856,40 +856,130 @@
     window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
   }
 
+  // "Get the app": the popup shows the right install steps for this phone or computer.
   const ua = navigator.userAgent;
   const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  const installBox = $("installBox");
-  const installBtn = $("installBtn");
-  const installHint = $("installHint");
-  let installEvent = null;
-  const installDismissed = () => store.get("huddle:installDismissed") === "1";
+  const isAndroid = /Android/i.test(ua);
+  const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const browser = (() => {
+    if (/SamsungBrowser/i.test(ua)) return "samsung";
+    if (/EdgA?\//.test(ua) || /EdgiOS/.test(ua)) return "edge";
+    if (/CriOS/.test(ua)) return "chrome-ios";
+    if (/FxiOS/.test(ua)) return "firefox-ios";
+    if (/Firefox\//.test(ua)) return "firefox";
+    if (/Chrome\//.test(ua)) return "chrome";
+    if (/Safari\//.test(ua)) return "safari";
+    return "other";
+  })();
+  const ICON = {
+    share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5M5 12v8h14v-8"/></svg>',
+    addHome: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg>',
+    dots: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
+    menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
+    install: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M12 8v6M9 11l3 3 3-3"/></svg>',
+  };
+  const key = (icon, label) => `<span class="key">${icon || ""}${label}</span>`;
+  function installSteps() {
+    // Returns { steps: [...html], note }
+    if (isIOS) {
+      if (browser === "safari") return { steps: [
+        `Tap ${key(ICON.share, "Share")} at the bottom of the screen`,
+        `Scroll down and tap ${key(ICON.addHome, "Add to Home Screen")}`,
+        `Tap ${key("", "Add")} in the top corner`,
+      ], note: "Huddle will show up on your home screen like any other app." };
+      return { steps: [
+        `Tap ${key(ICON.share, "Share")} next to the address bar`,
+        `Tap ${key(ICON.addHome, "Add to Home Screen")}`,
+        `Tap ${key("", "Add")}`,
+      ], note: "Don't see it? Open this link in Safari and try again." };
+    }
+    if (isAndroid) {
+      if (browser === "samsung") return { steps: [
+        `Tap ${key(ICON.menu, "Menu")} at the bottom`,
+        `Tap ${key("", "Add page to")} then ${key("", "Home screen")}`,
+      ] };
+      if (browser === "firefox") return { steps: [
+        `Tap ${key(ICON.dots, "Menu")} next to the address bar`,
+        `Tap ${key(ICON.install, "Install")}`,
+      ] };
+      return { steps: [
+        `Tap ${key(ICON.dots, "Menu")} at the top right`,
+        `Tap ${key(ICON.install, "Install app")} or ${key("", "Add to Home screen")}`,
+        `Tap ${key("", "Install")}`,
+      ] };
+    }
+    // Computers
+    if (browser === "edge") return { steps: [
+      `Click ${key("", "···")} at the top right`,
+      `Choose ${key("", "Apps")} then ${key(ICON.install, "Install this site as an app")}`,
+    ] };
+    if (browser === "chrome") return { steps: [
+      `Click the ${key(ICON.install, "Install")} icon at the right end of the address bar`,
+      `Or open ${key(ICON.dots, "Menu")} then ${key("", "Cast, save, and share")} then ${key("", "Install page as app")}`,
+    ] };
+    if (browser === "safari") return { steps: [
+      `In the menu bar, click ${key("", "File")}`,
+      `Choose ${key(ICON.addHome, "Add to Dock")}`,
+    ], note: "Needs macOS Sonoma or newer." };
+    if (browser === "firefox") return { steps: [], note: "Firefox can't install web apps. Bookmark this page, or open it in Chrome or Edge to install Huddle as an app. Calls work fine right here in the browser." };
+    return { steps: [], note: "Bookmark this page, or open it in Chrome to install Huddle as an app." };
+  }
 
-  // Android and computers (Chrome, Edge, Samsung Internet): the browser offers a real install prompt.
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault();
-    installEvent = e;
-    if (!installDismissed()) installBox.hidden = false;
-  });
-  installBtn.onclick = async () => {
+  const sheet = $("installSheet");
+  const sheetBody = $("sheetBody");
+  const sheetInstall = $("sheetInstall");
+  const getAppBtn = $("getAppBtn");
+  let installEvent = null;
+  const SEEN_KEY = "huddle:installPromptSeen";
+
+  function renderSheet() {
+    if (installEvent) {
+      // The browser can install it in one tap.
+      sheetBody.innerHTML = '<p class="sheet-note">One tap and Huddle is added to your home screen and app list.</p>';
+      sheetInstall.hidden = false;
+      return;
+    }
+    sheetInstall.hidden = true;
+    const { steps, note } = installSteps();
+    sheetBody.innerHTML =
+      (steps.length ? `<ol class="steps">${steps.map((t) => `<li><span>${t}</span></li>`).join("")}</ol>` : "") +
+      (note ? `<p class="sheet-note">${note}</p>` : "");
+  }
+  function openSheet() {
+    renderSheet();
+    sheet.hidden = false;
+    (sheetInstall.hidden ? $("sheetLater") : sheetInstall).focus({ preventScroll: true });
+  }
+  function closeSheet() {
+    sheet.hidden = true;
+    store.set(SEEN_KEY, "1");
+  }
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
+  $("sheetLater").onclick = closeSheet;
+  getAppBtn.onclick = openSheet;
+  sheetInstall.onclick = async () => {
     if (!installEvent) return;
     installEvent.prompt();
     const choice = await installEvent.userChoice.catch(() => null);
     installEvent = null;
-    installBox.hidden = true;
-    if (choice && choice.outcome === "accepted") toast("Huddle is installed");
+    closeSheet();
+    if (choice && choice.outcome === "accepted") { toast("Huddle is installed"); getAppBtn.hidden = true; }
   };
-  window.addEventListener("appinstalled", () => { installBox.hidden = true; });
-  // iPhone and iPad: there's no install prompt, so show the two steps instead.
-  if (isIOS && !isStandalone && !installDismissed()) {
-    installHint.innerHTML = 'Tap <svg class="share-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5M5 12v8h14v-8"/></svg> Share, then <b>Add to Home Screen</b>.';
-    installBtn.hidden = true;
-    installBox.hidden = false;
+
+  // Chrome, Edge and Samsung Internet hand us a real install prompt.
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    installEvent = e;
+    if (!sheet.hidden) renderSheet();
+  });
+  window.addEventListener("appinstalled", () => { getAppBtn.hidden = true; sheet.hidden = true; });
+
+  if (!isStandalone()) {
+    getAppBtn.hidden = false;
+    // First time someone opens the link, show the popup on its own (once per device).
+    if (store.get(SEEN_KEY) !== "1") setTimeout(() => { if (!room) openSheet(); }, 900);
   }
-  $("installClose").onclick = () => {
-    installBox.hidden = true;
-    store.set("huddle:installDismissed", "1");
-  };
 
   // Hook for the future game layer: #gameArea is the mount point.
   window.huddle = { gameArea: $("gameArea"), peers, get room() { return room; } };

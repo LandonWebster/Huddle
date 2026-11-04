@@ -17,7 +17,8 @@ A web app where friends join a room and talk over live voice + video, with a pan
 
 ## Install it as an app (PWA)
 Huddle works in the browser on iPhone, Android, Mac, Windows and Chromebook, and can be installed like an app:
-- **Android and computers (Chrome, Edge, Samsung Internet):** an "Install" button appears on the start screen, or use the browser's install icon.
+- The first time someone opens the link (and isn't using the installed app), a "Get the Huddle app" popup shows the steps for their device. "Not now" hides it for good on that device, and the "Get the app" button on the start screen opens it again.
+- **Android and computers (Chrome, Edge, Samsung Internet):** one tap on "Install Huddle". Other browsers get step-by-step menu instructions.
 - **iPhone and iPad (Safari):** the start screen shows how: tap Share, then Add to Home Screen.
 The installed app opens full screen with its own icon and still opens without internet (calls need a connection). Installing needs the https link; it won't offer to install from a plain http address.
 

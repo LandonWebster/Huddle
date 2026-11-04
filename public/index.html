@@ -27,6 +27,10 @@
           <h1>Huddle</h1>
           <p>Hop on a call with friends. Games coming soon.</p>
         </div>
+        <button class="get-app" id="getAppBtn" type="button" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+          Get the app
+        </button>
       </header>
 
       <div class="preview">
@@ -57,15 +61,6 @@
 
       <p id="lobbyError" class="error" role="alert"></p>
 
-      <div id="installBox" class="install-box" hidden>
-        <img src="/icons/icon-192.png" alt="" width="36" height="36">
-        <div class="install-text">
-          <strong>Get the Huddle app</strong>
-          <span id="installHint">Install it for quick access from your home screen.</span>
-        </div>
-        <button class="btn small" id="installBtn" type="button">Install</button>
-        <button class="icon-btn" id="installClose" type="button" aria-label="Not now">✕</button>
-      </div>
     </div>
   </main>
 
@@ -141,6 +136,25 @@
       <button class="ctl hangup" id="leaveBtn" aria-label="Leave call" title="Leave"></button>
     </nav>
   </main>
+
+  <!-- ============ GET THE APP ============ -->
+  <div id="installSheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <img src="/icons/icon-192.png" alt="" width="52" height="52">
+        <div>
+          <h2 id="sheetTitle">Get the Huddle app</h2>
+          <p id="sheetSub">Free, no app store needed. It opens full screen from your home screen.</p>
+        </div>
+      </div>
+      <div id="sheetBody" class="sheet-body"></div>
+      <div class="sheet-actions">
+        <button class="btn primary" id="sheetInstall" type="button" hidden>Install Huddle</button>
+        <button class="btn ghost" id="sheetLater" type="button">Not now</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
