@@ -121,7 +121,8 @@
   const STEPS = [
     { el: "startBtn", text: "This button starts a call. I'll give you a little code to send your friends. Take your time." },
     { el: "joinForm", text: "If a friend sends you a code, type it here and tap Join." },
-    { el: "pCam", text: "This turns your camera on or off. Your mic button is right next to it." },
+    { el: "lobbyFriends", text: "Your friends show up here. A green dot means they're on Huddle right now, and you can call them with one tap." },
+    { el: "pCam", text: "These choose if your mic and camera are on when a call starts. Your camera stays off until then." },
     { el: "pipRow", text: "This decides if I come to your call. In a call, tap the game button to pick a game. That's it. Have fun." },
   ];
   let tour = null;
@@ -289,9 +290,108 @@
     if (e.detail === "butter") say("Let's make some butter together. Tap as fast or as slow as you like.");
   });
 
+  // ---------- Talking with Pip (real conversation) ----------
+  // Tap Pip on the start screen or in a call. Type, or hold the mic where the browser can listen.
+  const callPeople = new Map();
+  let currentGame = null;
+  window.addEventListener("huddle:joined", (e) => { callPeople.clear(); ((e.detail || {}).peers || []).forEach((n, i) => callPeople.set("p" + i, n)); });
+  window.addEventListener("huddle:peer", (e) => { const d = e.detail; if (d.joined) callPeople.set(d.id, d.name); else callPeople.delete(d.id); });
+  window.addEventListener("huddle:left", () => { callPeople.clear(); currentGame = null; });
+  window.addEventListener("huddle:playing", (e) => { currentGame = e.detail; });
+  const GAME_NAMES = { butter: "Butter Clicker", trivia: "Pip's Trivia", tictactoe: "Tic-tac-toe", connect4: "Connect Four" };
+
+  const talkLog = []; // { role: "user" | "assistant", text }
+  let chatEl = null, busy = false;
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function openChat() {
+    if (chatEl) return;
+    chatEl = document.createElement("div");
+    chatEl.className = "pip-chat";
+    chatEl.setAttribute("role", "dialog");
+    chatEl.setAttribute("aria-label", "Talk with Pip");
+    chatEl.innerHTML = `
+      <div class="pc-card">
+        <header class="pc-head"><span class="pc-face"></span><div><strong>Talk with Pip</strong><small>Ask me anything, or just say hi.</small></div><button type="button" class="pc-close" aria-label="Close">✕</button></header>
+        <div class="pc-msgs" aria-live="polite"></div>
+        <form class="pc-form">
+          ${Recognition ? '<button type="button" class="pc-mic" aria-label="Talk to Pip">🎤</button>' : ""}
+          <input name="t" maxlength="500" placeholder="Say something to Pip" autocomplete="off">
+          <button type="submit" class="pc-send">Send</button>
+        </form>
+      </div>`;
+    chatEl.querySelector(".pc-face").appendChild(face(40));
+    document.body.appendChild(chatEl);
+    const msgs = chatEl.querySelector(".pc-msgs");
+    const form = chatEl.querySelector(".pc-form");
+    const draw = () => {
+      msgs.innerHTML = (talkLog.length ? "" : `<p class="pc-hint">Try "What should we play?" or "Tell me a joke."</p>`) +
+        talkLog.map((m) => `<p class="pc-m ${m.role === "user" ? "me" : "pip"}">${esc(m.text)}</p>`).join("") +
+        (busy ? '<p class="pc-m pip typing"><i></i><i></i><i></i></p>' : "");
+      msgs.scrollTop = msgs.scrollHeight;
+    };
+    chatEl._draw = draw;
+    draw();
+    const close = () => { if (chatEl) chatEl.remove(); chatEl = null; };
+    chatEl.querySelector(".pc-close").onclick = close;
+    chatEl.addEventListener("click", (e) => { if (e.target === chatEl) close(); });
+    form.onsubmit = (e) => { e.preventDefault(); const t = form.t.value.trim(); if (!t || busy) return; form.t.value = ""; ask(t); };
+    const mic = chatEl.querySelector(".pc-mic");
+    if (mic) mic.onclick = () => listen(mic, form);
+    setTimeout(() => form.t.focus(), 50);
+  }
+  function listen(mic, form) {
+    try {
+      const r = new Recognition();
+      r.lang = navigator.language || "en-US";
+      r.interimResults = true;
+      r.maxAlternatives = 1;
+      mic.classList.add("on");
+      stopSpeaking();
+      let finalText = "";
+      r.onresult = (e) => {
+        let t = "";
+        for (const res of e.results) { t += res[0].transcript; if (res.isFinal) finalText = t; }
+        form.t.value = t;
+      };
+      r.onend = () => { mic.classList.remove("on"); const t = (finalText || form.t.value).trim(); if (t && !busy) { form.t.value = ""; ask(t); } };
+      r.onerror = () => mic.classList.remove("on");
+      r.start();
+    } catch { mic.classList.remove("on"); }
+  }
+  async function ask(text) {
+    talkLog.push({ role: "user", text });
+    busy = true;
+    if (chatEl) chatEl._draw();
+    let answer;
+    try {
+      const r = await fetch("/api/pip", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + (ls.get("huddle:token") || "") },
+        body: JSON.stringify({
+          messages: talkLog.slice(-12),
+          context: { inCall: !!H().inCall, peers: [...callPeople.values()], game: H().gameOpen && currentGame ? GAME_NAMES[currentGame] || currentGame : null },
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      answer = j.reply || (j.setup ? "I can only say my usual lines for now. Real chatting isn't switched on yet." : j.error || "Hmm, I didn't catch that. Try again?");
+    } catch { answer = "I can't reach the internet right now. Let's try again in a bit."; }
+    busy = false;
+    talkLog.push({ role: "assistant", text: answer });
+    if (talkLog.length > 40) talkLog.splice(0, talkLog.length - 40);
+    if (chatEl) chatEl._draw();
+    // Pip answers out loud too (only to you, through your own speaker).
+    speak(answer);
+  }
+  hello.style.cursor = "pointer";
+  hello.title = "Talk with Pip";
+  hello.addEventListener("click", () => { if (!document.querySelector(".pip-tour")) openChat(); });
+  dockFace.style.cursor = "pointer";
+  dockFace.title = "Talk with Pip";
+  dockFace.addEventListener("click", openChat);
+
   // Games and other parts of the app can ask Pip to speak.
   window.Pip = {
-    say, face, speak, stopSpeaking,
+    say, face, speak, stopSpeaking, openChat,
     get on() { return pipOn; },
     cheer(text) { say(text); },
   };

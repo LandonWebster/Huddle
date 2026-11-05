@@ -49,15 +49,22 @@
       <!-- Pip, the calm blob host, says hello here each time the app opens -->
       <div class="pip-hello" id="pipHello"></div>
 
-      <div class="preview">
+      <!-- Friends, and who's around right now (the camera only turns on once you're in a call) -->
+      <section class="lobby-friends" id="lobbyFriends" aria-label="Friends">
+        <div class="lf-head"><strong>Friends</strong><small id="lfCount"></small></div>
+        <ul class="lf-list" id="lfList"><li class="lf-empty">Loading…</li></ul>
+      </section>
+
+      <div class="join-with">
+        <span>Join calls with</span>
+        <button class="ctl small" id="pMic" type="button" aria-label="Toggle microphone" title="Microphone"></button>
+        <button class="ctl small" id="pCam" type="button" aria-label="Toggle camera" title="Camera"></button>
+      </div>
+      <div class="preview" hidden>
         <video id="previewVideo" autoplay playsinline muted></video>
         <div id="previewOff" class="preview-off">
           <div class="avatar big" id="previewAvatar">?</div>
-          <span id="previewMsg">Camera is off</span>
-        </div>
-        <div class="preview-controls">
-          <button class="ctl" id="pMic" aria-label="Toggle microphone" title="Microphone"></button>
-          <button class="ctl" id="pCam" aria-label="Toggle camera" title="Camera"></button>
+          <span id="previewMsg"></span>
         </div>
       </div>
 
@@ -218,5 +225,7 @@
   <script src="/chats.js"></script>
   <script src="/pip.js"></script>
   <script src="/games/tictactoe.js"></script>
+  <script src="/games/connect4.js"></script>
+  <script src="/games/trivia.js"></script>
 </body>
 </html>

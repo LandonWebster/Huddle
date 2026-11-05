@@ -24,3 +24,6 @@ services:
       # Postgres database for accounts and saved chats (e.g. a free Neon database).
       - key: DATABASE_URL
         sync: false
+      # Lets Pip really talk back (a Claude API key from console.anthropic.com).
+      - key: ANTHROPIC_API_KEY
+        sync: false

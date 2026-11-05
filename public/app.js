@@ -390,36 +390,58 @@
     sendState();
   }
 
-  async function initPreview() {
+  // The start screen doesn't turn the camera or mic on. They start when you start or join a
+  // call; the lobby buttons just choose whether you come in with them on or off.
+  let mediaReady = null;
+  function initPreview() {
     els.nameInput.value = store.get("huddle:name") || "";
     const m = location.pathname.match(/^\/r\/([A-Za-z0-9]+)/);
     if (m) els.codeInput.value = cleanCode(m[1]);
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       local.micOn = local.camOn = false;
-      els.previewMsg.textContent = window.isSecureContext ? "This browser can't do calls" : "Open this page over https to use camera/mic";
-      renderLobbyButtons();
-      return;
+      els.lobbyError.textContent = window.isSecureContext ? "This browser can't do calls" : "Open this page over https to use camera/mic";
     }
-    // Ask for both at once so there's a single permission prompt.
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: { facingMode: "user", ...videoConstraints(profile()) },
-      });
-      s.getTracks().forEach((t) => local.stream.addTrack(t));
-    } catch {
-      // Maybe only one device is available or allowed; try them separately.
-      try { local.stream.addTrack(await getTrack("audio")); } catch { local.micOn = false; }
-      try { local.stream.addTrack(await getTrack("video")); } catch { local.camOn = false; els.previewMsg.textContent = "Camera unavailable"; }
-    }
-    refreshLocalVideo();
-    applyQuality(true);
-    detectFlip();
     renderLobbyButtons();
   }
+  function startMedia() {
+    if (mediaReady) return mediaReady;
+    mediaReady = (async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      const wantMic = local.micOn, wantCam = local.camOn;
+      if (wantMic && wantCam) {
+        // Ask for both at once so there's a single permission prompt.
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: { facingMode: local.facing || "user", ...videoConstraints(profile()) },
+          });
+          s.getTracks().forEach((t) => local.stream.addTrack(t));
+        } catch {}
+      }
+      // Maybe only one device is available or allowed; try them separately.
+      if (wantMic && !track("audio")) { try { local.stream.addTrack(await getTrack("audio")); } catch { local.micOn = false; } }
+      if (wantCam && !track("video")) { try { local.stream.addTrack(await getTrack("video")); } catch { local.camOn = false; } }
+      refreshLocalVideo();
+      applyQuality(true);
+      detectFlip();
+      renderLocalState();
+    })();
+    return mediaReady;
+  }
+  function stopMedia() {
+    for (const t of local.stream.getTracks()) { t.stop(); local.stream.removeTrack(t); }
+    mediaReady = null;
+    refreshLocalVideo();
+  }
+  // Before a call: just remember the choice. During a call: really switch.
+  const lobbyToggle = (kind) => {
+    if (mediaReady) return kind === "mic" ? setMic(!local.micOn) : setCam(!local.camOn);
+    if (kind === "mic") local.micOn = !local.micOn; else local.camOn = !local.camOn;
+    renderLobbyButtons();
+  };
 
-  els.pMic.onclick = () => setMic(!local.micOn);
-  els.pCam.onclick = () => setCam(!local.camOn);
+  els.pMic.onclick = () => lobbyToggle("mic");
+  els.pCam.onclick = () => lobbyToggle("cam");
   els.nameInput.oninput = renderLobbyButtons;
   els.startBtn.onclick = () => joinRoom(randomCode());
   els.joinForm.onsubmit = (e) => {
@@ -438,6 +460,7 @@
       audioCtx.resume();
     } catch {}
     store.set("huddle:name", myName());
+    startMedia();
     configReady = loadConfig();
     leaving = false;
     els.startBtn.disabled = true;
@@ -489,6 +512,7 @@
       case "joined":
         // Make sure we know the relay servers before connecting to anyone.
         await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
+        await startMedia(); // camera and mic are ready before anyone is called
         myId = msg.id;
         room = msg.room;
         enterCallUI();
@@ -501,6 +525,7 @@
         break;
       case "peer-joined":
         await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
+        await startMedia();
         createPeer(msg.id, msg.name, msg.state, false);
         updateCount();
         if (!els.volumePop.hidden) renderPeerVolumes();
@@ -834,7 +859,8 @@
     clearChat();
     els.startBtn.disabled = false;
     history.replaceState(null, "", "/");
-    refreshLocalVideo();
+    // Leaving turns the camera and mic off (their lights go out), unless the app is rejoining.
+    if (!keepService) stopMedia(); else refreshLocalVideo();
     window.dispatchEvent(new Event("huddle:left"));
     setTimeout(checkVersion, 500);
   }

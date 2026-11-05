@@ -167,6 +167,7 @@ wss.on("connection", (ws) => {
       }).catch(() => {});
       return;
     }
+    if (msg.type === "presence") { api.presence(ws, msg); return; }
     if (msg.type === "join" && !roomCode) {
       const code = cleanCode(msg.room);
       if (!code) return send(ws, { type: "error", reason: "bad_room" });
@@ -236,7 +237,7 @@ wss.on("connection", (ws) => {
       const g = gameFor(roomCode, String(msg.game || ""));
       if (!me || !g) return;
       if (msg.action === "sync") { g.dirty = true; return; }
-      if (GAMES[msg.game].action(g.state, { id, name: me.name }, msg, room.size)) g.dirty = true;
+      if (GAMES[msg.game].action(g.state, { id, name: me.name }, msg, room.size, room)) g.dirty = true;
     }
   });
 

@@ -2,7 +2,8 @@
 // call sees the same thing and people who join late catch up. To add a game, create a module
 // with { id, create(), action(state, player, msg), tick?(state, players) } and list it here.
 const butter = require("./butter");
+const trivia = require("./trivia");
 
-const GAMES = { [butter.id]: butter };
+const GAMES = { [butter.id]: butter, [trivia.id]: trivia };
 
 module.exports = { GAMES };

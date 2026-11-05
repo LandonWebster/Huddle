@@ -20,6 +20,7 @@
   const linkify = (t) => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 
   const IC = {
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
     menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
     photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>',
@@ -77,9 +78,11 @@
   setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25000);
 
   function onLive(m) {
-    if (m.type === "auth-ok") { if (view === "room" && room) catchUp(); return; }
+    if (m.type === "auth-ok") { if (view === "room" && room) catchUp(); sendPresence(); loadLobbyFriends(); return; }
+    if (m.type === "presence") { updatePresence(m); return; }
+    if (m.type === "call-invite") { showInvite(m); return; }
     if (m.type === "auth-failed") { signedOut(); return; }
-    if (m.type === "chats-changed") { if (view === "list") loadList(); else refreshBadge(); return; }
+    if (m.type === "chats-changed") { if (view === "list") loadList(); else refreshBadge(); loadLobbyFriends(); return; }
     if (m.type === "chat-message") {
       if (view === "room" && room && room.id === m.chatId) { addMessages([m.message], true); markRead(); }
       else if (view === "list") loadList();
@@ -265,7 +268,7 @@
       if (!r.chats.length) { list.innerHTML = '<li class="ch-empty">No chats yet. Add a friend by their name above.</li>'; }
       else list.innerHTML = r.chats.map((c) => `
         <li><button type="button" data-id="${c.id}">
-          <span class="ch-av">${esc(initials(c.friend.display))}</span>
+          <span class="ch-av${c.friend.online ? " online" : ""}" data-u="${c.friend.id}">${esc(initials(c.friend.display))}</span>
           <span class="ch-row"><strong>${esc(c.friend.display)}</strong><small>${esc(preview(c.last))}</small></span>
           <span class="ch-meta"><small>${c.last ? when(c.last.at) : ""}</small>${c.unread ? `<b class="ch-dot">${c.unread > 99 ? "99+" : c.unread}</b>` : ""}</span>
         </button></li>`).join("");
@@ -696,6 +699,97 @@
   }
 
   // ---------- Start ----------
+  // ----- Friends on the start screen, who's online, and call invites -----
+  const lfList = document.getElementById("lfList");
+  const lfCount = document.getElementById("lfCount");
+  let lobbyChats = [];
+  function statusText(f) { return f.inCall ? "In a call" : f.online ? "On Huddle now" : "Away"; }
+  async function loadLobbyFriends() {
+    if (!lfList || !token) return;
+    try {
+      const r = await api("/chats");
+      lobbyChats = r.chats;
+      chatsCache = r.chats;
+      setBadge(r.chats.reduce((a, c) => a + c.unread, 0));
+      drawLobbyFriends();
+    } catch {}
+  }
+  function drawLobbyFriends() {
+    if (!lfList) return;
+    const list = [...lobbyChats].sort((a, b) => (b.friend.online - a.friend.online) || a.friend.display.localeCompare(b.friend.display));
+    const on = list.filter((c) => c.friend.online).length;
+    lfCount.textContent = list.length ? `${on} online` : "";
+    if (!list.length) {
+      lfList.innerHTML = '<li class="lf-empty"><span>No friends yet.</span><button type="button" class="lf-add">Add a friend</button></li>';
+      lfList.querySelector(".lf-add").onclick = () => { show(); openList(); setTimeout(() => { const i = root.querySelector(".ch-add input"); if (i) i.focus(); }, 50); };
+      return;
+    }
+    lfList.innerHTML = list.slice(0, 8).map((c) => `
+      <li class="${c.friend.online ? "on" : ""}">
+        <span class="ch-av sm${c.friend.online ? " online" : ""}${c.friend.inCall ? " busy" : ""}">${esc(initials(c.friend.display))}</span>
+        <span class="lf-text"><strong>${esc(c.friend.display)}</strong><small>${statusText(c.friend)}</small></span>
+        <button type="button" class="lf-chat" data-id="${c.id}" aria-label="Chat with ${esc(c.friend.display)}">${IC.chat || "💬"}</button>
+        <button type="button" class="lf-call" data-id="${c.id}">Call</button>
+      </li>`).join("") + (list.length > 8 ? `<li class="lf-more"><button type="button">See all ${list.length} friends</button></li>` : "");
+    for (const b of lfList.querySelectorAll(".lf-call")) b.onclick = () => callFriend(lobbyChats.find((c) => c.id === b.dataset.id));
+    for (const b of lfList.querySelectorAll(".lf-chat")) b.onclick = () => { const c = lobbyChats.find((x) => x.id === b.dataset.id); show(); openRoom(c); };
+    const more = lfList.querySelector(".lf-more button");
+    if (more) more.onclick = () => { show(); openList(); };
+  }
+  function updatePresence(m) {
+    for (const c of [...lobbyChats, ...chatsCache]) if (c.friend.id === m.userId) Object.assign(c.friend, { online: m.online, inCall: m.inCall });
+    drawLobbyFriends();
+    if (view === "list") for (const av of root.querySelectorAll(`.ch-av[data-u="${m.userId}"]`)) av.classList.toggle("online", m.online);
+  }
+  async function callFriend(c) {
+    const h = H();
+    if (!c || !h.joinRoom) return;
+    if (h.inCall) { invite(c, h.room); return; }
+    const code = h.newRoomCode();
+    h.joinRoom(code);
+    invite(c, code);
+  }
+  async function invite(c, code) {
+    try {
+      await api(`/chats/${c.id}/messages`, { body: { kind: "text", body: `📹 Join my video call: ${location.origin}/r/${code}` } });
+      const r = await api(`/chats/${c.id}/invite`, { body: { room: code } });
+      toast(r.online ? `Asked ${c.friend.display.split(/\s+/)[0]} to join` : `${c.friend.display.split(/\s+/)[0]} isn't on Huddle right now. They'll see the link in your chat.`, 3500);
+    } catch (ex) { toast(ex.message); }
+  }
+  // An in-app card only (no sound, no notification): it shows while Huddle is open.
+  let inviteEl = null, inviteTimer = null;
+  function showInvite(m) {
+    const h = H();
+    if (h.inCall && h.room === m.room) return;
+    if (inviteEl) inviteEl.remove();
+    clearTimeout(inviteTimer);
+    inviteEl = document.createElement("div");
+    inviteEl.className = "invite-card";
+    inviteEl.setAttribute("role", "dialog");
+    inviteEl.innerHTML = `
+      <span class="ch-av">${esc(initials(m.from.display))}</span>
+      <span class="ic-text"><strong>${esc(m.from.display)}</strong><small>wants you in a call</small></span>
+      <button type="button" class="ic-no">Not now</button>
+      <button type="button" class="ic-yes">Join</button>`;
+    document.body.appendChild(inviteEl);
+    const close = () => { if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer); };
+    inviteEl.querySelector(".ic-no").onclick = close;
+    inviteEl.querySelector(".ic-yes").onclick = () => {
+      close();
+      if (!root.hidden && !gate) { hide(); if (history.state && history.state.huddleChats) history.back(); }
+      const go = () => h.joinRoom(m.room);
+      if (h.inCall) { document.getElementById("leaveBtn").click(); setTimeout(go, 400); } else go();
+    };
+    inviteTimer = setTimeout(close, 60000);
+  }
+  function sendPresence() {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "presence", inCall: !!H().inCall }));
+  }
+  window.addEventListener("huddle:joined", () => setTimeout(sendPresence, 50));
+  window.addEventListener("huddle:left", () => setTimeout(sendPresence, 50));
+  window.addEventListener("huddle:signedin", () => loadLobbyFriends());
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadLobbyFriends(); });
+
   async function boot() {
     if (!token) { openGate("signup"); return; }
     try {

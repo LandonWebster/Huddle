@@ -7,6 +7,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.5.0",
     "pg": "^8.23.1",
     "pg-mem": "^3.0.14",
     "ws": "^8.22.1"

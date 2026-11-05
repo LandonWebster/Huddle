@@ -2,6 +2,7 @@
 // over the same WebSocket the app already uses (only while the app is open; Huddle never sends
 // notifications).
 const store = require("./store");
+const pipAi = require("./pip-ai");
 
 const MAX_IMAGE = 6 * 1024 * 1024;
 const MAX_VOICE = 4 * 1024 * 1024;
@@ -12,9 +13,39 @@ const VOICE_TYPES = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audi
 const sockets = new Map();
 function attach(ws, user) {
   const set = sockets.get(user.id) || new Set();
+  const wasOnline = set.size > 0;
   set.add(ws);
   sockets.set(user.id, set);
-  ws.on("close", () => { set.delete(ws); if (!set.size) sockets.delete(user.id); });
+  ws.huddleUser = user;
+  if (!wasOnline) tellFriends(user);
+  ws.on("close", () => {
+    set.delete(ws);
+    if (!set.size) sockets.delete(user.id);
+    tellFriends(user);
+  });
+}
+// Online = the app is open on some device. "In a call" is reported by the app itself.
+function presenceOf(userId) {
+  const set = sockets.get(userId);
+  if (!set || !set.size) return { online: false, inCall: false };
+  return { online: true, inCall: [...set].some((w) => w.huddleInCall) };
+}
+async function tellFriends(user) {
+  try {
+    const chats = await store.listChats(user);
+    const p = presenceOf(user.id);
+    for (const c of chats) push(c.friend.id, { type: "presence", userId: user.id, ...p });
+  } catch {}
+}
+// From the app's own socket: { type: "presence", inCall }.
+function presence(ws, msg) {
+  const user = ws.huddleUser;
+  if (!user) return;
+  const inCall = !!msg.inCall;
+  if (ws.huddleInCall === inCall) return;
+  const before = presenceOf(user.id).inCall;
+  ws.huddleInCall = inCall;
+  if (presenceOf(user.id).inCall !== before) tellFriends(user);
 }
 function push(userId, msg) {
   const set = sockets.get(userId);
@@ -105,7 +136,11 @@ async function handle(req, res, url) {
     const me = await store.userForToken(tokenOf(req));
     if (!me) return json(res, 401, { error: "Sign in first" });
 
-    if (route === "GET /me") return json(res, 200, { user: store.publicUser(me), saved: store.persistent });
+    if (route === "GET /me") return json(res, 200, { user: store.publicUser(me), saved: store.persistent, pipChat: pipAi.enabled() });
+    if (route === "POST /pip") {
+      const r = await pipAi.reply(me, await readJson(req));
+      return json(res, r.status, r.body);
+    }
     if (route === "POST /logout") { await store.endSession(tokenOf(req)); return json(res, 200, {}); }
     if (route === "GET /users") return json(res, 200, { users: await store.searchUsers(me, url.searchParams.get("q")) });
     if (route === "POST /friends") {
@@ -116,7 +151,11 @@ async function handle(req, res, url) {
       push(r.friend.id, { type: "chats-changed" });
       return json(res, 200, r);
     }
-    if (route === "GET /chats") return json(res, 200, { chats: await store.listChats(me), saved: store.persistent });
+    if (route === "GET /chats") {
+      const chats = await store.listChats(me);
+      for (const c of chats) Object.assign(c.friend, presenceOf(c.friend.id));
+      return json(res, 200, { chats, saved: store.persistent });
+    }
 
     if (parts[0] === "chats" && parts[1]) {
       const chat = await store.chatFor(me, parts[1]);
@@ -127,6 +166,15 @@ async function handle(req, res, url) {
         return json(res, 200, await store.messages(chat, {
           before: url.searchParams.get("before"), around: url.searchParams.get("around"), limit: url.searchParams.get("limit"),
         }));
+      }
+      // Ask a friend to join your call. Their app shows it only while it's open (no notification).
+      if (route === "POST /chats/:id/invite") {
+        const { room } = await readJson(req);
+        const code = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+        if (!code) return json(res, 400, { error: "No call to invite to" });
+        const friendId = chat.a === me.id ? chat.b : chat.a;
+        push(friendId, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me) });
+        return json(res, 200, { online: presenceOf(friendId).online });
       }
       if (route === "GET /chats/:id/pinned") return json(res, 200, { messages: await store.pinnedMessages(chat) });
       if (route === "POST /chats/:id/read") {
@@ -176,4 +224,4 @@ async function handle(req, res, url) {
   }
 }
 
-module.exports = { handle, attach };
+module.exports = { handle, attach, presence };
