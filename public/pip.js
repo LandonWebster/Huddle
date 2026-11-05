@@ -363,18 +363,25 @@
     busy = true;
     if (chatEl) chatEl._draw();
     let answer;
-    try {
+    const context = { name: myName(), inCall: !!H().inCall, peers: [...callPeople.values()], game: H().gameOpen && currentGame ? GAME_NAMES[currentGame] || currentGame : null };
+    const brain = () => (window.PipBrain ? window.PipBrain.reply(text, context) : "I'm here. Want to play a game?");
+    // Free by default: Pip's own brain answers right on the phone. If the server has a Claude key,
+    // Pip uses that for real conversation instead.
+    if (!(window.HuddleAccount && window.HuddleAccount.pipChat)) {
+      await new Promise((r) => setTimeout(r, 350 + Math.random() * 450)); // a little "thinking" pause
+      answer = brain();
+    } else try {
       const r = await fetch("/api/pip", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: "Bearer " + (ls.get("huddle:token") || "") },
         body: JSON.stringify({
           messages: talkLog.slice(-12),
-          context: { inCall: !!H().inCall, peers: [...callPeople.values()], game: H().gameOpen && currentGame ? GAME_NAMES[currentGame] || currentGame : null },
+          context,
         }),
       });
       const j = await r.json().catch(() => ({}));
-      answer = j.reply || (j.setup ? "I can only say my usual lines for now. Real chatting isn't switched on yet." : j.error || "Hmm, I didn't catch that. Try again?");
-    } catch { answer = "I can't reach the internet right now. Let's try again in a bit."; }
+      answer = j.reply || (j.setup || r.status >= 500 ? brain() : j.error || "Hmm, I didn't catch that. Try again?");
+    } catch { answer = brain(); }
     busy = false;
     talkLog.push({ role: "assistant", text: answer });
     if (talkLog.length > 40) talkLog.splice(0, talkLog.length - 40);

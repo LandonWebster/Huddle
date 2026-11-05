@@ -795,6 +795,7 @@
     try {
       const r = await api("/me");
       me = r.user; saved = r.saved;
+      window.HuddleAccount.pipChat = !!r.pipChat;
       if (H().setName) H().setName(me.display);
       connect();
       refreshBadge();
