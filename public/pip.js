@@ -40,6 +40,9 @@
     const vol = H().volume == null ? 1 : H().volume;
     const done = () => { if (onEnd) onEnd(); };
     if (!vol) { setTimeout(done, Math.min(6000, 900 + text.length * 55)); return; }
+    // On phones, the phone's speech voice can take over the call's audio, so during a call Pip
+    // shows his words in the bubble instead of saying them out loud.
+    if (H().inCall && (H().isNativeApp || H().isAndroid || H().isIOS)) { setTimeout(done, Math.min(6000, 1200 + text.length * 55)); return; }
     if (H().isNativeApp && !noNativeVoice) {
       let ended = false;
       const end = () => { if (!ended) { ended = true; done(); } };
