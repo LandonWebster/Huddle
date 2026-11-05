@@ -100,18 +100,23 @@ function checkPassword(pw, stored) {
 }
 const tokenHash = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
 
+// Names keep their capitals for display; lookups ignore capitals and extra spaces.
+const tidyName = (n) => String(n || "").trim().replace(/\s+/g, " ");
+const nameKey = (n) => tidyName(n).toLowerCase();
+
 const publicUser = (u) => u && { id: u.id, username: u.username, display: u.display };
 
 async function createUser(username, password) {
-  const uname = username.toLowerCase();
+  const display = tidyName(username);
+  const uname = nameKey(display);
   if (await one("SELECT id FROM users WHERE username = $1", [uname])) return { error: "That name is taken" };
-  const user = { id: id(), username: uname, display: username, pass_hash: hashPassword(password), created_at: now() };
+  const user = { id: id(), username: uname, display, pass_hash: hashPassword(password), created_at: now() };
   await q("INSERT INTO users (id, username, display, pass_hash, created_at) VALUES ($1, $2, $3, $4, $5)",
     [user.id, user.username, user.display, user.pass_hash, user.created_at]);
   return { user };
 }
 async function login(username, password) {
-  const u = await one("SELECT * FROM users WHERE username = $1", [String(username).toLowerCase()]);
+  const u = await one("SELECT * FROM users WHERE username = $1", [nameKey(username)]);
   if (!u || !checkPassword(password, u.pass_hash)) return null;
   return u;
 }
@@ -130,7 +135,7 @@ async function endSession(token) {
 
 // ---------- Friends and chats ----------
 async function searchUsers(me, text) {
-  const t = String(text || "").toLowerCase().replace(/[^a-z0-9_.]/g, "");
+  const t = nameKey(text).replace(/[%_\\]/g, (c) => "\\" + c);
   if (!t) return [];
   const rows = await q("SELECT * FROM users WHERE username LIKE $1 AND id <> $2 ORDER BY username LIMIT 10", [t + "%", me.id]);
   return rows.map(publicUser);
@@ -146,7 +151,7 @@ async function chatBetween(x, y) {
 }
 // Adding someone puts you on each other's list and opens a chat between you.
 async function addFriend(me, username) {
-  const other = await one("SELECT * FROM users WHERE username = $1", [String(username || "").toLowerCase()]);
+  const other = await one("SELECT * FROM users WHERE username = $1", [nameKey(username)]);
   if (!other) return { error: "No one has that name" };
   if (other.id === me.id) return { error: "That's you" };
   for (const [u, f] of [[me.id, other.id], [other.id, me.id]]) {
@@ -254,6 +259,7 @@ async function mediaOwner(mid) {
 }
 
 module.exports = {
+  tidyName, nameKey,
   init, get persistent() { return persistent; },
   createUser, login, newSession, userForToken, endSession, publicUser,
   searchUsers, addFriend, listChats, chatFor, otherId,

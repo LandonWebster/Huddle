@@ -66,7 +66,8 @@ function sendingTooFast(userId) {
   return list.length > 30;
 }
 
-const NAME_RE = /^[A-Za-z0-9_.]{3,20}$/;
+// Letters, numbers, spaces, _ . - and ' (3 to 20). Spaces only between words.
+const NAME_RE = /^[\p{L}\p{N}_.'-]+( [\p{L}\p{N}_.'-]+)*$/u;
 
 async function handle(req, res, url) {
   try {
@@ -84,17 +85,18 @@ async function handle(req, res, url) {
 
     if (route === "POST /signup") {
       const { username, password } = await readJson(req);
-      if (!NAME_RE.test(String(username || ""))) return json(res, 400, { error: "Names are 3 to 20 letters, numbers, _ or ." });
+      const name = store.tidyName(username);
+      if (name.length < 3 || name.length > 20 || !NAME_RE.test(name)) return json(res, 400, { error: "Names are 3 to 20 characters: letters, numbers, spaces, _ . - or '" });
       // Any letters, numbers and symbols, 6 to 25 characters.
       const pwLen = [...String(password || "")].length;
       if (pwLen < 6 || pwLen > 25) return json(res, 400, { error: "Passwords are 6 to 25 characters" });
-      const r = await store.createUser(String(username), String(password));
+      const r = await store.createUser(name, String(password));
       if (r.error) return json(res, 409, r);
       return json(res, 200, { token: await store.newSession(r.user.id), user: store.publicUser(r.user) });
     }
     if (route === "POST /login") {
       const { username, password } = await readJson(req);
-      if (tooManyTries(String(username || "").toLowerCase())) return json(res, 429, { error: "Too many tries. Wait a few minutes." });
+      if (tooManyTries(store.nameKey(username))) return json(res, 429, { error: "Too many tries. Wait a few minutes." });
       const u = await store.login(String(username || ""), String(password || ""));
       if (!u) return json(res, 401, { error: "Wrong name or password" });
       return json(res, 200, { token: await store.newSession(u.id), user: store.publicUser(u) });

@@ -13,7 +13,10 @@
   const H = () => window.huddle || {};
   const toast = (m, ms) => (H().toast ? H().toast(m, ms) : alert(m));
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const initials = (n) => String(n || "?").trim().slice(0, 2).toUpperCase();
+  const initials = (n) => {
+    const w = String(n || "?").trim().split(/\s+/);
+    return (w.length > 1 ? w[0][0] + w[w.length - 1][0] : w[0].slice(0, 2)).toUpperCase();
+  };
   const linkify = (t) => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 
   const IC = {
@@ -129,11 +132,11 @@
           <button class="${mode === "login" ? "on" : ""}" data-mode="login" type="button">Sign in</button>
         </div>
         <form class="ch-form">
-          <label><span>Name</span><input name="username" maxlength="20" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="e.g. landon_w" required></label>
+          <label><span>Name</span><input name="username" maxlength="20" autocomplete="username" autocapitalize="words" spellcheck="false" placeholder="e.g. Landon Webster" required></label>
           <label><span>Password</span><span class="ch-pw"><input name="password" type="password" minlength="6" maxlength="25" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" required><button type="button" class="ch-eye" aria-label="Show password" aria-pressed="false">${IC.eye}</button></span></label>
           <p class="ch-err" role="alert"></p>
           <button class="btn primary" type="submit">${mode === "signup" ? "Make my account" : "Sign in"}</button>
-          ${mode === "signup" ? '<p class="ch-fine">Names can use letters, numbers, _ and . (3 to 20). Passwords can use any letters, numbers and symbols (6 to 25).</p>' : ""}
+          ${mode === "signup" ? '<p class="ch-fine">Names can use letters, numbers and spaces (3 to 20). Passwords can use any letters, numbers and symbols (6 to 25).</p>' : ""}
         </form>
       </div>`;
     root.querySelector('[data-act="back"]').onclick = goBack;
