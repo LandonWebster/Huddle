@@ -8,7 +8,11 @@ import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
+import java.util.ArrayList;
 import android.speech.tts.UtteranceProgressListener;
 import java.util.HashMap;
 import java.util.Locale;
@@ -30,6 +34,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  startCall / endCall         keep the call running when the phone is locked or you switch apps
  *  startScreenShare / stop...  share the phone screen (Android shows its own "start recording?" prompt)
  *  speak / stopSpeaking        Pip's voice (the phone's own text-to-speech)
+ *  listen / stopListening      talk to Pip: speech to text (partial words arrive as "speechPartial")
  *
  * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
  */
@@ -87,6 +92,71 @@ public class HuddleNativePlugin extends Plugin {
         // Replace anything Pip was still saying (that call ends through onStop).
         int r = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, id);
         if (r != TextToSpeech.SUCCESS) finishSpeech(id);
+    }
+
+    // ---------- Talking to Pip ----------
+    private SpeechRecognizer recognizer;
+    private PluginCall listenCall;
+
+    private void endListen(String text, String error) {
+        PluginCall c = listenCall;
+        listenCall = null;
+        if (recognizer != null) { try { recognizer.destroy(); } catch (Exception ignored) {} recognizer = null; }
+        if (c == null) return;
+        if (error != null) { c.reject(error); return; }
+        JSObject r = new JSObject();
+        r.put("text", text == null ? "" : text);
+        c.resolve(r);
+    }
+
+    private static String firstResult(Bundle b) {
+        if (b == null) return "";
+        ArrayList<String> list = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        return list == null || list.isEmpty() ? "" : list.get(0);
+    }
+
+    @PluginMethod
+    public void listen(PluginCall call) {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) { call.reject("no-mic"); return; }
+        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) { call.reject("not-available"); return; }
+        getActivity().runOnUiThread(() -> {
+            if (listenCall != null) endListen(null, "replaced");
+            listenCall = call;
+            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle params) {}
+                @Override public void onBeginningOfSpeech() {}
+                @Override public void onRmsChanged(float rmsdB) {}
+                @Override public void onBufferReceived(byte[] buffer) {}
+                @Override public void onEndOfSpeech() {}
+                @Override public void onEvent(int eventType, Bundle params) {}
+                @Override public void onPartialResults(Bundle partial) {
+                    JSObject d = new JSObject();
+                    d.put("text", firstResult(partial));
+                    notifyListeners("speechPartial", d);
+                }
+                @Override public void onResults(Bundle results) { endListen(firstResult(results), null); }
+                @Override public void onError(int error) {
+                    // No words heard counts as an empty answer, not a failure.
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) endListen("", null);
+                    else endListen(null, "error-" + error);
+                }
+            });
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag());
+            try { recognizer.startListening(intent); } catch (Exception e) { endListen(null, "start-failed"); }
+        });
+    }
+
+    @PluginMethod
+    public void stopListening(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (recognizer != null) { try { recognizer.stopListening(); } catch (Exception ignored) {} }
+            call.resolve();
+        });
     }
 
     @PluginMethod

@@ -314,7 +314,7 @@
         <header class="pc-head"><span class="pc-face"></span><div><strong>Talk with Pip</strong><small>Ask me anything, or just say hi.</small></div><button type="button" class="pc-close" aria-label="Close">✕</button></header>
         <div class="pc-msgs" aria-live="polite"></div>
         <form class="pc-form">
-          ${Recognition ? '<button type="button" class="pc-mic" aria-label="Talk to Pip">🎤</button>' : ""}
+          ${Recognition || H().isNativeApp ? '<button type="button" class="pc-mic" aria-label="Talk to Pip">🎤</button>' : ""}
           <input name="t" maxlength="500" placeholder="Say something to Pip" autocomplete="off">
           <button type="submit" class="pc-send">Send</button>
         </form>
@@ -339,7 +339,35 @@
     if (mic) mic.onclick = () => listen(mic, form);
     setTimeout(() => form.t.focus(), 50);
   }
+  // In the Android app the phone's own speech recognition listens (the app's web view can't).
+  let nativeListening = false;
+  async function listenNative(mic, form) {
+    if (nativeListening) { H().native("stopListening").catch(() => {}); return; }
+    nativeListening = true;
+    mic.classList.add("on");
+    stopSpeaking();
+    let sub = null;
+    try {
+      const Cap = window.Capacitor;
+      sub = Cap && Cap.addListener ? await Cap.addListener("HuddleNative", "speechPartial", (d) => { if (d && d.text) form.t.value = d.text; }) : null;
+      const r = await H().native("listen");
+      const t = String((r && r.text) || form.t.value || "").trim();
+      form.t.value = "";
+      if (t && !busy) ask(t);
+    } catch (e) {
+      const msg = String((e && (e.message || e.code)) || e);
+      if (/no-mic/.test(msg)) H().toast && H().toast("Allow the microphone for Huddle to talk to Pip");
+      else if (/not-available/.test(msg)) H().toast && H().toast("This phone doesn't have speech recognition");
+      else if (/not implemented|unimplemented|not available/i.test(msg)) H().toast && H().toast("Update the Huddle app to talk to Pip by voice");
+      else H().toast && H().toast("I couldn't hear that. Try again?");
+    } finally {
+      nativeListening = false;
+      mic.classList.remove("on");
+      if (sub) { try { sub.remove(); } catch {} }
+    }
+  }
   function listen(mic, form) {
+    if (H().isNativeApp) return listenNative(mic, form);
     try {
       const r = new Recognition();
       r.lang = navigator.language || "en-US";
