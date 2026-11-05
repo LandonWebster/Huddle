@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" content="#0f1020">
+  <meta name="theme-color" content="#111113">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -25,6 +25,9 @@
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -35,13 +38,16 @@
         <img src="/icon.svg" alt="" width="40" height="40">
         <div>
           <h1>Huddle</h1>
-          <p>Hop on a call with friends. Games coming soon.</p>
+          <p>Hop on a call. Play a game.</p>
         </div>
         <button class="get-app" id="getAppBtn" type="button" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
           Get the app
         </button>
       </header>
+
+      <!-- Pip, the calm blob host, says hello here each time the app opens -->
+      <div class="pip-hello" id="pipHello"></div>
 
       <div class="preview">
         <video id="previewVideo" autoplay playsinline muted></video>
@@ -59,6 +65,11 @@
         <span>Your name</span>
         <input id="nameInput" maxlength="24" placeholder="e.g. Landon" autocomplete="nickname">
       </label>
+
+      <div class="pip-row" id="pipRow">
+        <span>Bring Pip to this call</span>
+        <button type="button" class="sw" id="pipLobbySw" role="switch" aria-checked="true" aria-label="Bring Pip to this call"><span class="track"></span></button>
+      </div>
 
       <button id="startBtn" class="btn primary">Start a new call</button>
 
@@ -91,7 +102,11 @@
         <span>Room <strong id="roomCode">----</strong></span>
         <span class="count" id="peopleCount">1</span>
       </div>
-      <button class="btn small" id="inviteBtn">Copy invite link</button>
+      <div class="pip-dock" id="pipDock" aria-live="polite"></div>
+      <div class="top-right">
+        <button type="button" class="sw chip" id="pipCallSw" role="switch" aria-checked="true" aria-label="Pip on or off"><span class="mini-blob"></span>Pip<span class="track"></span></button>
+        <button class="btn small" id="inviteBtn"><span class="inv-long">Copy invite link</span><span class="inv-short">Invite</span></button>
+      </div>
     </header>
 
     <div class="stage">
@@ -201,5 +216,7 @@
   <script src="/games/hub.js"></script>
   <script src="/games/butter.js"></script>
   <script src="/chats.js"></script>
+  <script src="/pip.js"></script>
+  <script src="/games/tictactoe.js"></script>
 </body>
 </html>

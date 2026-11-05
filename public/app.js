@@ -443,7 +443,7 @@
     els.startBtn.disabled = true;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onopen = () => ws.send(JSON.stringify({ type: "join", room: code, name: myName(), state: myState() }));
+    ws.onopen = () => ws.send(JSON.stringify({ type: "join", room: code, name: myName(), state: myState(), pip: store.get("huddle:pip") !== "0" }));
     // Handle messages strictly in order, so an offer never arrives before its peer exists.
     let queue = Promise.resolve();
     ws.onmessage = (ev) => {
@@ -497,7 +497,7 @@
         for (const p of msg.peers) createPeer(p.id, p.name, p.state, true);
         updateCount();
         for (const m of msg.chat || []) addChat(m, false);
-        window.dispatchEvent(new Event("huddle:joined"));
+        window.dispatchEvent(new CustomEvent("huddle:joined", { detail: { settings: msg.settings || {}, peers: msg.peers.map((p) => p.name) } }));
         break;
       case "peer-joined":
         await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
@@ -505,12 +505,20 @@
         updateCount();
         if (!els.volumePop.hidden) renderPeerVolumes();
         toast(`${msg.name} joined`);
+        window.dispatchEvent(new CustomEvent("huddle:peer", { detail: { joined: true, name: msg.name, id: msg.id } }));
         break;
       case "peer-left": {
         const p = peers.get(msg.id);
-        if (p) { toast(`${p.name} left`); removePeer(msg.id); }
+        if (p) {
+          toast(`${p.name} left`);
+          window.dispatchEvent(new CustomEvent("huddle:peer", { detail: { joined: false, name: p.name, id: msg.id } }));
+          removePeer(msg.id);
+        }
         break;
       }
+      case "room-settings":
+        window.dispatchEvent(new CustomEvent("huddle:settings", { detail: msg }));
+        break;
       case "game-state":
         for (const cb of gameListeners[msg.game] || []) { try { cb(msg.state); } catch (e) { console.error(e); } }
         break;
@@ -1272,7 +1280,12 @@
   if (!isStandalone() && !isNativeApp) {
     getAppBtn.hidden = false;
     // First time someone opens the link, show the popup on its own (once per device).
-    if (store.get(SEEN_KEY) !== "1") setTimeout(() => { if (!room) openSheet(); }, 900);
+    // Pip's first-time tutorial goes first; the popup waits until it's done or skipped.
+    if (store.get(SEEN_KEY) !== "1") {
+      const later = () => setTimeout(() => { if (!room) openSheet(); }, 900);
+      if (store.get("huddle:tutorialDone") === "1") later();
+      else window.addEventListener("huddle:tutorialdone", later, { once: true });
+    }
   }
 
   // ---------- Self view & full screen ----------
@@ -1406,8 +1419,18 @@
     },
     get gameOpen() { return currentPanel === "game"; },
     joinRoom: (code) => joinRoom(code),
+    sendSettings(st) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "settings", ...st })); },
+    // How loud Pip should be: follows the app's volume and Silent mode.
+    get volume() { return sound.silent ? 0 : sound.master; },
+    get someoneTalking() { return !!document.querySelector("#grid .tile.speaking:not(.self)"); },
+    get inCall() { return !!room; },
     newRoomCode: () => randomCode(),
-    setName(n) { if (!els.nameInput.value.trim()) { els.nameInput.value = n; store.set("huddle:name", n); } },
+    // Your call name comes from your account.
+    setName(n) {
+      els.nameInput.value = n; store.set("huddle:name", n);
+      els.nameInput.readOnly = true;
+      els.nameInput.title = "This is your account name";
+    },
   };
   window.dispatchEvent(new Event("huddle:ready"));
 

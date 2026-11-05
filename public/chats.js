@@ -109,7 +109,7 @@
     refreshBadge();
   }
   window.addEventListener("popstate", () => {
-    if (root.hidden) return;
+    if (root.hidden || gate) return;
     if (view === "room") { openList(); history.pushState({ huddleChats: 1 }, ""); }
     else hide();
   });
@@ -118,15 +118,26 @@
   openBtn.onclick = () => { show(); token ? openList() : openAuth(); };
 
   // ----- Sign up / sign in -----
+  // An account is needed to use Huddle. Until you have one, this screen can't be closed.
+  let gate = false;
+  function openGate(mode) {
+    gate = true;
+    root.hidden = false;
+    document.body.classList.add("chats-open", "account-gate");
+    openAuth(mode);
+  }
   function openAuth(mode = "signup") {
     view = "auth";
     root.innerHTML = `
       <header class="ch-head">
-        <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
-        <strong>Chats &amp; friends</strong><span class="ch-sp"></span>
+        ${gate ? '<span class="ch-sp"></span>' : `<button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>`}
+        <strong>${gate ? "Welcome to Huddle" : "Chats &amp; friends"}</strong><span class="ch-sp"></span>
       </header>
       <div class="ch-auth">
-        <p class="ch-lead">${mode === "signup" ? "Pick a name so friends can add you. Your chats are saved to your account." : "Welcome back."}</p>
+        ${gate ? '<div class="ch-gate-pip"></div>' : ""}
+        <p class="ch-lead">${mode === "signup"
+          ? (gate ? "Make an account to get started. This is the name friends see in calls and use to add you." : "Pick a name so friends can add you. Your chats are saved to your account.")
+          : "Welcome back. Sign in to keep going."}</p>
         <div class="ch-tabs" role="tablist">
           <button class="${mode === "signup" ? "on" : ""}" data-mode="signup" type="button">Make an account</button>
           <button class="${mode === "login" ? "on" : ""}" data-mode="login" type="button">Sign in</button>
@@ -139,9 +150,14 @@
           ${mode === "signup" ? '<p class="ch-fine">Names can use letters, numbers and spaces (3 to 20). Passwords can use any letters, numbers and symbols (6 to 25).</p>' : ""}
         </form>
       </div>`;
-    root.querySelector('[data-act="back"]').onclick = goBack;
+    const backBtn = root.querySelector('[data-act="back"]');
+    if (backBtn) backBtn.onclick = goBack;
+    if (gate && window.Pip) root.querySelector(".ch-gate-pip").appendChild(window.Pip.face(72));
     for (const b of root.querySelectorAll("[data-mode]")) b.onclick = () => openAuth(b.dataset.mode);
     const form = root.querySelector("form");
+    // Carry over the name you used before as a guest.
+    const guest = (ls.get("huddle:name") || "").trim();
+    if (mode === "signup" && guest && guest !== "Guest") form.username.value = guest.slice(0, 20);
     // Eye button: show or hide what you typed.
     const eye = form.querySelector(".ch-eye");
     eye.onclick = () => {
@@ -163,7 +179,12 @@
         token = r.token; ls.set(TOKEN_KEY, token); me = r.user;
         if (H().setName) H().setName(me.display);
         connect();
-        openList();
+        if (gate) {
+          gate = false;
+          document.body.classList.remove("account-gate");
+          hide();
+          signedIn();
+        } else openList();
       } catch (ex) { err.textContent = ex.message; }
       btn.disabled = false;
     };
@@ -172,8 +193,15 @@
   function signedOut() {
     token = null; me = null; ls.set(TOKEN_KEY, null); disconnect();
     badge.hidden = true;
-    if (!root.hidden) openAuth("login");
+    window.HuddleAccount.signedIn = false;
+    if (!gate) openGate("login");
   }
+  function signedIn() {
+    window.HuddleAccount.signedIn = true;
+    window.HuddleAccount.user = me;
+    window.dispatchEvent(new CustomEvent("huddle:signedin", { detail: me }));
+  }
+  window.HuddleAccount = { signedIn: false, user: null };
 
   // ----- Chats list -----
   let chatsCache = [];
@@ -669,14 +697,18 @@
 
   // ---------- Start ----------
   async function boot() {
-    if (!token) return;
+    if (!token) { openGate("signup"); return; }
     try {
       const r = await api("/me");
       me = r.user; saved = r.saved;
       if (H().setName) H().setName(me.display);
       connect();
       refreshBadge();
-    } catch {}
+      signedIn();
+    } catch (ex) {
+      // Offline or server asleep: let you in with the account you already have on this device.
+      if (ex.status !== 401 && token) signedIn();
+    }
   }
   boot();
 })();

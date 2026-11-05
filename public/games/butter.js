@@ -110,6 +110,7 @@
     }
     const flushTimer = setInterval(flush, 250);
 
+    let milestone = null;
     const off = huddle.onGame(GAME, (s) => {
       // Show our own taps right away, until the server has counted them.
       const me = s.players.find((p) => p.id === huddle.myId);
@@ -124,6 +125,15 @@
           if (u) huddle.toast(`${s.lastBuy.by} bought ${u.icon} ${u.name}`);
         }
         lastBuyAt = s.lastBuy.at;
+      }
+      // Pip cheers the team on at big milestones (only ones reached while we're playing).
+      const MILESTONES = [100, 1000, 10000, 100000, 1000000, 10000000];
+      const reached = MILESTONES.filter((m) => s.butter >= m).length;
+      if (milestone === null) milestone = reached;
+      else if (reached > milestone) {
+        milestone = reached;
+        const n = MILESTONES[reached - 1].toLocaleString();
+        if (window.Pip) window.Pip.cheer(`${n} butter. Look at this team go.`);
       }
       state = s;
       draw();
@@ -147,6 +157,7 @@
 
   window.HuddleGames.register({
     id: GAME,
+    kind: "group",
     title: "Butter Clicker",
     subtitle: "Tap the butter together. Everyone shares one tub.",
     icon: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M6 20 30 15 42 20 42 31 18 36 6 31Z" fill="#f5c431"/><path d="M6 20 30 15 42 20 18 25Z" fill="#ffe680"/><path d="M18 25V36" stroke="#c38f0c" stroke-width="1.5"/></svg>',

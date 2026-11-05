@@ -35,8 +35,10 @@
         <span class="game-go">${kind === "app" ? "Open" : "Play"}</span>
       </button>`;
     area.innerHTML =
-      `<p class="hub-label">Play together on this call</p>` +
-      games.map((g) => tile(g, "inapp")).join("") +
+      `<p class="hub-label">Group games · Pip hosts</p>` +
+      games.filter((g) => g.kind !== "versus").map((g) => tile(g, "inapp")).join("") +
+      (games.some((g) => g.kind === "versus") ? `<p class="hub-label">Head-to-head · play Pip</p>` +
+        games.filter((g) => g.kind === "versus").map((g) => tile(g, "inapp versus")).join("") : "") +
       `<p class="hub-label">Open another app</p>` +
       apps.map((a) => tile(a, "app")).join("");
     for (const b of area.querySelectorAll(".game-tile")) {

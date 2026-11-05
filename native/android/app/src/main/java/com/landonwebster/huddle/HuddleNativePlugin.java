@@ -7,6 +7,12 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
+import android.os.Bundle;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
@@ -23,6 +29,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *
  *  startCall / endCall         keep the call running when the phone is locked or you switch apps
  *  startScreenShare / stop...  share the phone screen (Android shows its own "start recording?" prompt)
+ *  speak / stopSpeaking        Pip's voice (the phone's own text-to-speech)
  *
  * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
  */
@@ -33,11 +40,62 @@ public class HuddleNativePlugin extends Plugin {
     @Override
     public void load() {
         instance = this;
+        tts = new TextToSpeech(getContext(), status -> {
+            ttsReady = status == TextToSpeech.SUCCESS;
+            if (!ttsReady) return;
+            tts.setLanguage(Locale.getDefault());
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String id) {}
+                @Override public void onDone(String id) { finishSpeech(id); }
+                @Override public void onError(String id) { finishSpeech(id); }
+                @Override public void onStop(String id, boolean interrupted) { finishSpeech(id); }
+            });
+        });
     }
 
     @Override
     protected void handleOnDestroy() {
         if (instance == this) instance = null;
+        if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
+    }
+
+    // ---------- Pip's voice ----------
+    private TextToSpeech tts;
+    private volatile boolean ttsReady = false;
+    private final Map<String, PluginCall> speaking = new HashMap<>();
+    private int utteranceCounter = 0;
+
+    private void finishSpeech(String id) {
+        PluginCall c;
+        synchronized (speaking) { c = speaking.remove(id); }
+        if (c != null) c.resolve();
+    }
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        String text = call.getString("text", "");
+        if (!ttsReady || tts == null || text.isEmpty()) { call.resolve(); return; }
+        float rate = call.getFloat("rate", 1f);
+        float pitch = call.getFloat("pitch", 1f);
+        float volume = call.getFloat("volume", 1f);
+        tts.setSpeechRate(rate);
+        tts.setPitch(pitch);
+        Bundle params = new Bundle();
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, Math.max(0f, Math.min(1f, volume)));
+        String id = "pip" + (++utteranceCounter);
+        synchronized (speaking) { speaking.put(id, call); }
+        // Replace anything Pip was still saying (that call ends through onStop).
+        int r = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, id);
+        if (r != TextToSpeech.SUCCESS) finishSpeech(id);
+    }
+
+    @PluginMethod
+    public void stopSpeaking(PluginCall call) {
+        if (tts != null) tts.stop();
+        java.util.List<PluginCall> pending;
+        synchronized (speaking) { pending = new java.util.ArrayList<>(speaking.values()); speaking.clear(); }
+        for (PluginCall c : pending) c.resolve();
+        call.resolve();
     }
 
     static void emitFrame(String jpegBase64, int width, int height) {

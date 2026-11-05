@@ -114,6 +114,8 @@ const rooms = new Map();
 // recent chat per room, so people who join late see the conversation
 const chats = new Map();
 const CHAT_HISTORY = 50;
+// per-room settings, e.g. { pip: true }
+const roomSettings = new Map();
 // shared game state per room: code -> { [gameId]: { state, dirty } }
 const roomGames = new Map();
 function gameFor(code, gameId) {
@@ -168,10 +170,13 @@ wss.on("connection", (ws) => {
     if (msg.type === "join" && !roomCode) {
       const code = cleanCode(msg.room);
       if (!code) return send(ws, { type: "error", reason: "bad_room" });
+      const isNew = !rooms.has(code);
       const room = rooms.get(code) || new Map();
       if (room.size >= MAX_PER_ROOM) return send(ws, { type: "error", reason: "room_full", max: MAX_PER_ROOM });
       rooms.set(code, room);
       roomCode = code;
+      // Whoever starts the call decides whether Pip comes along; anyone can switch him later.
+      if (isNew || !roomSettings.has(code)) roomSettings.set(code, { pip: msg.pip !== false });
       const me = { ws, name: cleanName(msg.name), state: sanitizeState(msg.state) };
       // Tell the newcomer who is here; the newcomer starts a connection to each of them.
       send(ws, {
@@ -180,6 +185,7 @@ wss.on("connection", (ws) => {
         room: code,
         peers: [...room].map(([pid, p]) => ({ id: pid, name: p.name, state: p.state })),
         chat: chats.get(code) || [],
+        settings: roomSettings.get(code),
       });
       room.set(id, me);
       broadcast(room, { type: "peer-joined", id, name: me.name, state: me.state }, id);
@@ -214,6 +220,13 @@ wss.on("connection", (ws) => {
       if (!me) return;
       me.state = sanitizeState(msg.state);
       broadcast(room, { type: "peer-state", id, state: me.state }, id);
+    } else if (msg.type === "settings") {
+      const me = room.get(id);
+      const st = roomSettings.get(roomCode) || {};
+      if (!me || typeof msg.pip !== "boolean") return;
+      st.pip = msg.pip;
+      roomSettings.set(roomCode, st);
+      broadcast(room, { type: "room-settings", settings: st, by: me.name, byId: id });
     } else if (msg.type === "diag") {
       // Connection report from a call that couldn't connect, shown in the server log.
       const d = msg.data || {};
@@ -237,6 +250,7 @@ wss.on("connection", (ws) => {
       rooms.delete(roomCode);
       chats.delete(roomCode); // chat disappears once everyone has left
       roomGames.delete(roomCode); // and so do the games
+      roomSettings.delete(roomCode);
     }
   });
 });

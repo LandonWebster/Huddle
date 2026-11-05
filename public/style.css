@@ -584,3 +584,178 @@ input[type=range] { padding: 0; border: 0; background: transparent; accent-color
 .ch-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; border-radius: 10px; }
 .ch-eye svg { width: 22px; height: 22px; }
 .ch-eye[aria-pressed="true"] { color: #22d3ee; }
+
+/* =====================================================================
+   Night Glass look: matte black, royal blue and cyan, frosted glass panels
+   ===================================================================== */
+:root {
+  --bg: #111113; --panel: #17181d; --panel-2: #1f2026; --line: rgba(255,255,255,.11);
+  --text: #f2f4f8; --muted: #9aa3b8; --accent: #2f55e4; --accent-deep: #1f3fbf; --accent-2: #22d3ee;
+  --glass: rgba(255,255,255,.06);
+  --font: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+body {
+  font-family: var(--font);
+  background: radial-gradient(900px 600px at 0% 0%, #1b2f86 0%, transparent 65%),
+              radial-gradient(800px 600px at 100% 100%, #0a4a58 0%, transparent 65%), var(--bg);
+}
+.lobby-card, .sheet, .side-panel {
+  background: rgba(23,24,29,.72); border-color: var(--line);
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+}
+input { background: rgba(0,0,0,.35); border-color: var(--line); }
+input:focus { border-color: var(--accent-2); }
+input[readonly] { color: var(--muted); }
+.btn { background: var(--glass); border-color: var(--line); }
+.btn:hover { border-color: var(--accent-2); }
+.btn.primary { background: linear-gradient(135deg, #3b63f0, var(--accent-deep)); box-shadow: 0 10px 26px rgba(47,85,228,.35); color: #fff; }
+.get-app { background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 6px 20px rgba(47,85,228,.35); }
+.ctl { background: rgba(255,255,255,.12); }
+.ctl.on-accent, #gameBtn { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); }
+.steps li::before { background: var(--accent); }
+.live-dot { background: var(--accent-2) !important; box-shadow: 0 0 0 3px rgba(34,211,238,.2); }
+.tile { background: linear-gradient(160deg, #1d2f7a, #15161b); }
+.tile.speaking { outline-color: var(--accent-2) !important; }
+.chats-open { background: var(--glass); }
+
+/* ---------- Pip, the blob ---------- */
+.pip-blob {
+  --s: 64px; width: var(--s); height: var(--s); position: relative; flex: none;
+  border-radius: 52% 48% 50% 50% / 56% 56% 44% 44%;
+  background: radial-gradient(circle at 34% 28%, #d4fbff 0%, #22d3ee 42%, #2f55e4 100%);
+  box-shadow: 0 0 24px rgba(34,211,238,.35), inset 0 -6px 12px rgba(31,63,191,.45);
+  animation: pipBreathe 4s ease-in-out infinite; transition: width .45s ease, height .45s ease, box-shadow .3s;
+}
+.pip-blob .eye { position: absolute; top: 38%; width: 11%; height: 17%; background: #111113; border-radius: 50%; animation: pipBlink 6s infinite; }
+.pip-blob .eye.l { left: 30%; } .pip-blob .eye.r { right: 30%; }
+.pip-blob .cheek { position: absolute; top: 56%; width: 14%; height: 8%; border-radius: 50%; background: rgba(255,255,255,.35); }
+.pip-blob .cheek.l { left: 16%; } .pip-blob .cheek.r { right: 16%; }
+.pip-blob .mouth { position: absolute; left: 50%; top: 58%; width: 22%; height: 9%; transform: translateX(-50%); border: 2px solid #111113; border-top: 0; border-radius: 0 0 20px 20px; }
+.talking .pip-blob .mouth { background: #111113; animation: pipTalk .5s ease-in-out infinite alternate; }
+.talking .pip-blob { box-shadow: 0 0 0 6px rgba(34,211,238,.18), 0 0 34px rgba(34,211,238,.55), inset 0 -6px 12px rgba(31,63,191,.45); }
+.mini-blob { width: 16px; height: 16px; border-radius: 52% 48% 50% 50% / 56% 56% 44% 44%; background: radial-gradient(circle at 34% 28%, #d4fbff, #22d3ee 50%, #2f55e4); position: relative; flex: none; }
+.mini-blob::before, .mini-blob::after { content: ""; position: absolute; top: 36%; width: 2.5px; height: 3.5px; border-radius: 50%; background: #111113; }
+.mini-blob::before { left: 30%; } .mini-blob::after { right: 30%; }
+@keyframes pipBreathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.035); } }
+@keyframes pipBlink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+@keyframes pipTalk { from { height: 6%; } to { height: 12%; } }
+
+.pip-bubble {
+  background: rgba(17,17,19,.82); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid rgba(34,211,238,.35); border-radius: 16px; padding: 9px 13px; font-size: 14px; line-height: 1.4;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5); position: relative; color: var(--text);
+}
+.pip-bubble .who { color: var(--accent-2); font-weight: 700; }
+.pip-voice { display: inline-flex; gap: 2px; align-items: center; height: 11px; margin-left: 6px; vertical-align: middle; }
+.pip-voice i { width: 2.5px; height: 40%; background: var(--accent-2); border-radius: 2px; }
+.talking .pip-voice i { animation: pipWave .9s ease-in-out infinite alternate; }
+.pip-voice i:nth-child(2) { animation-delay: .15s; } .pip-voice i:nth-child(3) { animation-delay: .3s; } .pip-voice i:nth-child(4) { animation-delay: .45s; }
+@keyframes pipWave { from { height: 30%; } to { height: 100%; } }
+
+/* Start screen greeting */
+.pip-hello {
+  display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 18px;
+  background: var(--glass); border: 1px solid var(--line);
+}
+.pip-hello .pip-bubble { flex: 1; min-width: 0; }
+.pip-hello .pip-bubble:empty { display: none; }
+.pip-hello .pip-bubble::before {
+  content: ""; position: absolute; left: -6px; top: 50%; width: 10px; height: 10px; margin-top: -5px; background: inherit;
+  border-left: 1px solid rgba(34,211,238,.35); border-bottom: 1px solid rgba(34,211,238,.35); transform: rotate(45deg);
+}
+/* Pip on/off switch */
+.sw { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.sw .track { width: 36px; height: 22px; border-radius: 999px; background: rgba(255,255,255,.2); position: relative; transition: background .2s; flex: none; }
+.sw .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.sw[aria-checked="true"] .track { background: var(--accent-2); }
+.sw[aria-checked="true"] .track::after { transform: translateX(14px); }
+.sw:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; border-radius: 999px; }
+.sw.chip { padding: 5px 8px 5px 10px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); }
+.sw.chip .track { width: 30px; height: 18px; }
+.sw.chip .track::after { width: 12px; height: 12px; }
+.sw.chip[aria-checked="true"] .track::after { transform: translateX(12px); }
+.pip-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line); font-size: 14px; }
+.pip-row span { color: var(--muted); }
+
+/* In calls: Pip sits in the top bar, center. His bubble drops down when he talks. */
+.topbar { position: relative; }
+.top-right { display: flex; align-items: center; gap: 8px; }
+.inv-short { display: none; }
+@media (max-width: 560px) { .inv-long { display: none; } .inv-short { display: inline; } .room-info .count { display: none; } }
+.pip-dock {
+  position: absolute; left: 50%; top: max(6px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; width: min(340px, calc(100vw - 32px));
+}
+.pip-dock .pip-blob { --s: 40px; }
+.pip-dock.docked .pip-blob { --s: 26px; }
+.pip-dock .pip-bubble.drop {
+  width: 100%; opacity: 0; transform: translateY(-8px) scale(.95); transition: opacity .35s ease, transform .35s ease; pointer-events: none;
+}
+.pip-dock .pip-bubble.drop::before {
+  content: ""; position: absolute; top: -6px; left: 50%; width: 10px; height: 10px; margin-left: -5px; background: inherit;
+  border-left: 1px solid rgba(34,211,238,.35); border-top: 1px solid rgba(34,211,238,.35); transform: rotate(45deg);
+}
+.pip-dock.open .pip-bubble.drop { opacity: 1; transform: none; }
+.pip-dock.docked .pip-bubble.drop { opacity: 0; }
+.pip-dock.in-game { position: fixed; }
+.pip-dock.in-game:not(.open) { opacity: 0; }
+body.pip-off .pip-dock { display: none; }
+#call:not(.game-mode) .topbar { min-height: 60px; }
+
+/* First-time tour: dim everything, spotlight one thing, Pip explains */
+.pip-tour { position: fixed; inset: 0; z-index: 90; }
+.pip-spot {
+  position: fixed; border-radius: 16px; box-shadow: 0 0 0 3px #22d3ee, 0 0 26px rgba(34,211,238,.5), 0 0 0 200vmax rgba(5,5,8,.74);
+  transition: all .3s ease; pointer-events: none;
+}
+.pip-tour .pip-float { position: fixed; left: 16px; right: 16px; margin: 0 auto; max-width: 400px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pip-tour .pip-float.below { flex-direction: column-reverse; }
+.pip-tour .pip-bubble { width: 100%; }
+.tour-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.tour-nav .dots { display: flex; gap: 5px; }
+.tour-nav .dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.25); }
+.tour-nav .dots i.on { background: #22d3ee; width: 18px; border-radius: 4px; }
+.tour-nav .skip { background: none; border: 0; color: var(--muted); padding: 6px 4px; font-weight: 600; }
+.tour-nav .next { border: 0; padding: 7px 16px; border-radius: 999px; background: linear-gradient(135deg, #2f55e4, #1f3fbf); color: #fff; font-weight: 700; }
+
+/* Account comes first */
+body.account-gate .chats-screen .ch-head strong { text-align: center; }
+.ch-gate-pip { display: flex; justify-content: center; margin: 6px 0 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pip-blob, .pip-blob .eye, .talking .pip-blob .mouth, .talking .pip-voice i { animation: none !important; }
+}
+
+/* ---------- Tic-tac-toe vs Pip ---------- */
+.game-tile.versus .game-icon { background: linear-gradient(135deg, #1f3fbf, #7c3aed); }
+.ttt { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 4px 12px; min-height: 100%; box-sizing: border-box; justify-content: safe center; }
+.ttt-vs { display: flex; align-items: center; justify-content: space-between; width: min(100%, 340px); gap: 8px; }
+.ttt-side { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.ttt-side.pip { justify-content: flex-end; }
+.ttt-side strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ttt-side .ttt-mark { width: 26px; height: 26px; }
+.ttt-score { font-size: 22px; font-weight: 800; color: var(--accent-2, #22d3ee); min-width: 18px; text-align: center; }
+.ttt-face { display: inline-flex; }
+.ttt-mid { display: flex; flex-direction: column; align-items: center; color: var(--muted); font-size: 13px; }
+.ttt-mid small { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.ttt-board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: min(100%, 300px, 30vh); aspect-ratio: 1; flex-shrink: 0; }
+.ttt-cell {
+  border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(255,255,255,.04);
+  display: grid; place-items: center; cursor: pointer; padding: 0; color: inherit;
+  transition: background .15s, border-color .15s;
+}
+.ttt-cell:not(:disabled):hover { background: rgba(47,85,228,.16); border-color: rgba(47,85,228,.5); }
+.ttt-cell:disabled { cursor: default; }
+.ttt-cell.hint { border: 2px dashed var(--accent-2, #22d3ee); animation: ttt-hint 1.4s ease-in-out infinite; }
+.ttt-cell.win { background: rgba(34,211,238,.14); border-color: rgba(34,211,238,.6); }
+@keyframes ttt-hint { 50% { background: rgba(34,211,238,.10); } }
+.ttt-mark { display: block; width: 62%; height: 62%; animation: ttt-pop .22s ease-out; }
+.ttt-mark svg { width: 100%; height: 100%; display: block; }
+.ttt-mark.x { color: #6f8cff; }
+.ttt-mark.o { color: var(--accent-2, #22d3ee); }
+@keyframes ttt-pop { from { transform: scale(.4); opacity: 0; } }
+.ttt-line { margin: 0; min-height: 20px; color: var(--muted); font-size: 14px; text-align: center; max-width: 320px; }
+.ttt-again {
+  border: 0; border-radius: 999px; padding: 10px 22px; font: inherit; font-weight: 700; color: #fff; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent, #2f55e4), var(--accent-deep, #1f3fbf));
+}
