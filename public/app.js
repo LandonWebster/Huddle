@@ -93,6 +93,28 @@
     toast.t = setTimeout(() => els.toast.classList.remove("show"), ms);
   }
   const initials = (n) => (n || "?").trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
+  // Avatar colors people can pick for their profile (shared with chats.js through window.huddle).
+  const AVATAR_COLORS = {
+    blue: ["#2f55e4", "#22d3ee"], cyan: ["#0891b2", "#67e8f9"], purple: ["#6d28d9", "#c084fc"], pink: ["#db2777", "#f9a8d4"],
+    orange: ["#ea580c", "#fdba74"], green: ["#15803d", "#4ade80"], red: ["#b91c1c", "#f87171"], gold: ["#b45309", "#fde047"],
+  };
+  const avatarBg = (color) => { const c = AVATAR_COLORS[color] || AVATAR_COLORS.blue; return `linear-gradient(135deg, ${c[0]}, ${c[1]})`; };
+  // Paint an avatar element: the profile photo if there is one, otherwise initials on their color.
+  function paintAvatar(el, u, name) {
+    if (!el) return;
+    u = u || {};
+    el.style.background = avatarBg(u.color);
+    if (u.photo) {
+      el.style.backgroundImage = `url("/api/media/${encodeURIComponent(u.photo)}"), ${avatarBg(u.color)}`;
+      el.style.backgroundSize = "cover"; el.style.backgroundPosition = "center";
+      el.textContent = "";
+      el.classList.add("has-photo");
+    } else {
+      el.textContent = initials(name || u.display);
+      el.classList.remove("has-photo");
+    }
+  }
+  const myLook = () => { const u = (window.HuddleAccount && window.HuddleAccount.user) || {}; return { photo: u.photo || undefined, color: u.color || undefined }; };
   const randomCode = () => {
     const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let s = "";
@@ -417,6 +439,7 @@
     const self = peers.get("self");
     if (self) {
       self.tile.el.classList.toggle("cam-off", !local.camOn);
+      paintAvatar(self.tile.avatar, myLook(), myName());
       self.tile.el.classList.toggle("mic-muted", !local.micOn);
       self.tile.el.classList.toggle("rear", local.facing === "environment");
     }
@@ -556,7 +579,7 @@
     setTimeout(tryReconnect, Math.min(10000, 1000 * 2 ** reconnect.tries));
   }
 
-  const myState = () => ({ mic: local.micOn, cam: local.camOn });
+  const myState = () => ({ mic: local.micOn, cam: local.camOn, ...myLook() });
   function sendState() {
     if (ws && ws.readyState === 1 && room) ws.send(JSON.stringify({ type: "state", state: myState() }));
   }
@@ -811,7 +834,7 @@
     status.className = "status";
     el.append(video, avatarWrap, label, status);
     els.grid.append(el);
-    return { el, video, status };
+    return { el, video, status, avatar, name };
   }
 
   function setStatus(p, text) { p.tile.status.textContent = text; }
@@ -819,6 +842,7 @@
   function renderPeerState(p) {
     const st = p.silentTracks || {};
     p.tile.el.classList.toggle("cam-off", !p.state.cam || !!st.video);
+    paintAvatar(p.tile.avatar, p.state, p.tile.name);
     p.tile.el.classList.toggle("mic-muted", !p.state.mic);
   }
 
@@ -1518,6 +1542,9 @@
     get someoneTalking() { return !!document.querySelector("#grid .tile.speaking:not(.self)"); },
     get inCall() { return !!room; },
     newRoomCode: () => randomCode(),
+    avatarBg, paintAvatar,
+    // Your profile changed: tell everyone in the call so your camera-off tile updates.
+    profileChanged() { sendState(); const self = peers.get("self"); if (self) paintAvatar(self.tile.avatar, myLook(), myName()); },
     // Your call name comes from your account.
     setName(n) {
       els.nameInput.value = n; store.set("huddle:name", n);

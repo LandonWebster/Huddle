@@ -237,6 +237,7 @@ wss.on("connection", (ws) => {
       const g = gameFor(roomCode, String(msg.game || ""));
       if (!me || !g) return;
       if (msg.action === "sync") { g.dirty = true; return; }
+      if (msg.action === "claim") { claimGame(roomCode, String(msg.game), g, msg.token); return; }
       if (GAMES[msg.game].action(g.state, { id, name: me.name }, msg, room.size, room)) g.dirty = true;
     }
   });
@@ -250,6 +251,7 @@ wss.on("connection", (ws) => {
     if (room.size === 0) {
       rooms.delete(roomCode);
       chats.delete(roomCode); // chat disappears once everyone has left
+      saveRoomGames(roomCode); // saved games (like the butter tub) are kept for next time
       roomGames.delete(roomCode); // and so do the games
       roomSettings.delete(roomCode);
     }
@@ -258,8 +260,44 @@ wss.on("connection", (ws) => {
 
 function sanitizeState(s) {
   s = s || {};
-  return { mic: !!s.mic, cam: !!s.cam };
+  const out = { mic: !!s.mic, cam: !!s.cam };
+  // Profile look for the camera-off tile: an uploaded photo id and an avatar color name.
+  if (typeof s.photo === "string" && /^[A-Za-z0-9_-]{6,40}$/.test(s.photo)) out.photo = s.photo;
+  if (typeof s.color === "string" && /^[a-z]{3,10}$/.test(s.color)) out.color = s.color;
+  return out;
 }
+
+// Games that save (Butter Clicker) belong to the first signed-in person who opens them in the
+// call. Their saved progress is loaded, and the game is saved back to their account as it goes.
+async function claimGame(code, gameId, g, token) {
+  const game = GAMES[gameId];
+  if (!game.save || g.state.owner || g.claiming || typeof token !== "string") return;
+  g.claiming = true;
+  try {
+    const user = await store.userForToken(token);
+    if (!user || g.state.owner) return;
+    const data = await store.loadGame(gameId, user.id);
+    // Keep anything the call already made before the owner showed up.
+    const before = game.save(g.state);
+    game.load(g.state, data, { id: user.id, name: user.display });
+    if (!data && before.lifetime) game.load(g.state, before, g.state.owner);
+    g.state.changed = true;
+    g.dirty = true;
+  } catch (e) { console.error("game claim failed", e.message); }
+  finally { g.claiming = false; }
+}
+async function saveGameState(gameId, g) {
+  const game = GAMES[gameId];
+  if (!game.save || !g.state.owner || !g.state.changed) return;
+  g.state.changed = false;
+  try { await store.saveGame(gameId, g.state.owner.id, game.save(g.state)); }
+  catch (e) { g.state.changed = true; console.error("game save failed", e.message); }
+}
+function saveRoomGames(code) {
+  const all = roomGames.get(code);
+  if (all) for (const [gameId, g] of Object.entries(all)) saveGameState(gameId, g);
+}
+setInterval(() => { for (const code of roomGames.keys()) saveRoomGames(code); }, 15000);
 
 // Send game updates to everyone in the room, at most 5 times a second.
 function flushGames() {
@@ -303,4 +341,12 @@ store.init().then(() => {
 }).catch((e) => {
   console.error("Couldn't open the database:", e);
   process.exit(1);
+});
+
+// Render restarts the server on every deploy: save games in progress first.
+process.on("SIGTERM", async () => {
+  const jobs = [];
+  for (const [, all] of roomGames) for (const [gameId, g] of Object.entries(all)) jobs.push(saveGameState(gameId, g));
+  await Promise.race([Promise.allSettled(jobs), new Promise((r) => setTimeout(r, 4000))]);
+  process.exit(0);
 });

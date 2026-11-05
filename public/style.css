@@ -902,3 +902,66 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .pip-mute.off { background: rgba(248,113,113,.16); border-color: rgba(248,113,113,.5); color: #fca5a5; }
 .pip-hello > .pip-mute { position: absolute; top: 8px; right: 8px; z-index: 3; }
 .pc-voice { display: inline-flex; margin-right: 6px; }
+
+/* ---------- Group chats ---------- */
+.ch-av.group { background: linear-gradient(135deg, #1f3fbf, #7c3aed) !important; border-radius: 14px; }
+.ch-msg:has(.ch-from) { flex-direction: column; align-items: flex-start; }
+.ch-from { display: block; font-size: 11px; color: var(--accent-2, #22d3ee); margin: 0 0 2px 10px; }
+.ch-who-text { display: flex; flex-direction: column; min-width: 0; }
+.ch-who-text small { font-size: 11px; color: var(--muted); font-weight: 500; }
+.ch-newgroup { width: 100%; margin: 4px 0 10px; }
+.ch-gname { width: 100%; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--c-line, #23263a); background: var(--c-panel, #13141c); color: var(--text); padding: 12px 14px; font: inherit; font-size: 16px; margin-bottom: 12px; }
+.ch-pick { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ch-pick label { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 12px; cursor: pointer; }
+.ch-pick label:hover { background: rgba(255,255,255,.04); }
+.ch-pick input { width: 20px; height: 20px; accent-color: #2f55e4; }
+.ch-pick-go { width: 100%; }
+.ch-member { display: flex; align-items: center; gap: 10px; margin: 6px 4px; }
+.ch-sheet-title small { display: block; margin-top: 4px; font-size: 13px; line-height: 1.4; color: var(--muted); font-weight: 400; }
+
+/* ---------- Profiles ---------- */
+.ch-av.has-photo { color: transparent; }
+.ch-av.xl { width: 96px; height: 96px; font-size: 34px; }
+.tile .avatar.has-photo { color: transparent; }
+.ch-who[data-act="who"] { cursor: pointer; }
+.ch-profile { align-items: center; text-align: center; padding-top: 22px; }
+.ch-profile .pf-name { font-size: 20px; margin-top: 6px; }
+.pf-status { font-size: 13px; color: var(--muted); }
+.pf-status.on { color: #4ade80; }
+.pf-bio { margin: 6px 12px 2px; color: var(--text); line-height: 1.4; }
+.pf-actions { display: flex; gap: 8px; width: 100%; margin-top: 12px; }
+.pf-actions button { flex: 1; text-align: center !important; }
+.ch-sheet .pf-call { background: #2f55e4; color: #fff; }
+.pf-edit { padding: 18px 16px 30px; display: flex; flex-direction: column; align-items: center; gap: 10px; overflow-y: auto; }
+.pf-edit .pf-name { font-size: 20px; }
+.pf-photo-btns { display: flex; gap: 8px; align-items: center; }
+.pf-remove { background: none; border: 0; color: #fca5a5; font: inherit; cursor: pointer; padding: 8px; }
+.pf-label { align-self: stretch; margin: 10px 2px 0; color: var(--muted); font-size: 13px; font-weight: 600; }
+.pf-label small { font-weight: 400; }
+.pf-colors { align-self: stretch; display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+.pf-colors button { aspect-ratio: 1; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.pf-colors button.on { border-color: #fff; box-shadow: 0 0 0 2px #22d3ee; }
+.pf-edit .ch-gname { margin-bottom: 4px; }
+.pf-save { align-self: stretch; margin-top: 8px; }
+
+/* ---------- Butter Clicker: golden pats, golden butter, achievements ---------- */
+.bc-stage { position: relative; display: flex; justify-content: center; width: 100%; }
+.bc-pat { position: absolute; transform: translate(-50%, -50%); z-index: 2; border: 0; cursor: pointer; font-size: 26px; padding: 10px 12px; border-radius: 999px; background: radial-gradient(circle, rgba(253,224,71,.55), rgba(253,224,71,0) 70%); animation: bcPatBob 1.2s ease-in-out infinite; }
+@keyframes bcPatBob { 0%, 100% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-50%, -58%) scale(1.12); } }
+.bc-frenzy { text-align: center; font-weight: 800; color: #0b0b0f; background: linear-gradient(90deg, #fde047, #22d3ee); border-radius: 999px; padding: 6px 12px; margin: 6px auto 0; width: fit-content; font-size: 13px; }
+.bc-stick.frenzy svg { filter: drop-shadow(0 0 22px rgba(253,224,71,.75)); }
+.bc-owner { text-align: center; color: var(--muted); font-size: 12px; margin: 0 0 4px; }
+.bc-more { color: var(--muted); font-size: 12px; text-align: center; margin: 8px 0 0; }
+.bc-fresh { background: #13141c; border-radius: 14px; padding: 12px; font-size: 13px; color: var(--muted); }
+.bc-fresh p { margin: 0 0 8px; }
+.bc-fresh b { color: #fde047; }
+.bc-bar { height: 8px; border-radius: 999px; background: #23263a; overflow: hidden; margin-bottom: 4px; }
+.bc-bar span { display: block; height: 100%; background: linear-gradient(90deg, #2f55e4, #22d3ee); }
+.bc-fresh-btn { width: 100%; border: 0; border-radius: 12px; padding: 12px; font: inherit; font-weight: 800; cursor: pointer; color: #0b0b0f; background: linear-gradient(90deg, #fde047, #f59e0b); }
+.bc-fresh-btn.sure { background: #f87171; color: #fff; }
+.bc-ach { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.bc-badge { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center; padding: 8px 10px; border-radius: 12px; background: #13141c; opacity: .5; }
+.bc-badge.got { opacity: 1; outline: 1px solid rgba(34,211,238,.35); }
+.bc-badge i { grid-row: span 2; font-style: normal; font-size: 20px; }
+.bc-badge b { font-size: 12.5px; }
+.bc-badge small { font-size: 11px; color: var(--muted); }

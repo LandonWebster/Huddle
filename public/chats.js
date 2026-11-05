@@ -17,6 +17,16 @@
     const w = String(n || "?").trim().split(/\s+/);
     return (w.length > 1 ? w[0][0] + w[w.length - 1][0] : w[0].slice(0, 2)).toUpperCase();
   };
+  // A person's avatar: their profile photo, or initials on the color they picked.
+  const COLOR_NAMES = ["blue", "cyan", "purple", "pink", "orange", "green", "red", "gold"];
+  const avBg = (color) => (H().avatarBg ? H().avatarBg(color) : "");
+  function av(u, cls = "", attrs = "") {
+    u = u || {};
+    const style = u.photo
+      ? `background-image:url('/api/media/${encodeURIComponent(u.photo)}'), ${avBg(u.color)};background-size:cover;background-position:center`
+      : `background:${avBg(u.color)}`;
+    return `<span class="ch-av${cls ? " " + cls : ""}${u.photo ? " has-photo" : ""}" style="${style}" ${attrs}>${u.photo ? "" : esc(initials(u.display))}</span>`;
+  }
   const linkify = (t) => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 
   const IC = {
@@ -208,6 +218,7 @@
 
   // ----- Chats list -----
   let chatsCache = [];
+  let blocked = new Set(); // people I blocked (their group messages are hidden)
   function openList() {
     view = "list";
     room = null;
@@ -224,11 +235,13 @@
           <button class="btn small" type="submit">Add</button>
         </form>
         <div class="ch-suggest" hidden></div>
+        <button class="btn small ch-newgroup" type="button">👥 New group chat</button>
         <div class="ch-warn" hidden>Chats are not being saved yet. They'll disappear when the server restarts.</div>
         <ul class="ch-list"><li class="ch-empty">Loading…</li></ul>
       </div>`;
     root.querySelector('[data-act="back"]').onclick = goBack;
     root.querySelector('[data-act="account"]').onclick = openAccountMenu;
+    root.querySelector(".ch-newgroup").onclick = () => newGroup();
     const form = root.querySelector(".ch-add");
     const sug = root.querySelector(".ch-suggest");
     let t = null;
@@ -240,7 +253,7 @@
         try {
           const { users } = await api("/users?q=" + encodeURIComponent(v));
           sug.hidden = !users.length;
-          sug.innerHTML = users.map((u) => `<button type="button" data-u="${esc(u.username)}"><span class="ch-av sm">${esc(initials(u.display))}</span>${esc(u.display)}</button>`).join("");
+          sug.innerHTML = users.map((u) => `<button type="button" data-u="${esc(u.username)}">${av(u, "sm")}${esc(u.display)}</button>`).join("");
           for (const b of sug.querySelectorAll("button")) b.onclick = () => addFriend(b.dataset.u);
         } catch {}
       }, 200);
@@ -268,17 +281,26 @@
       if (!r.chats.length) { list.innerHTML = '<li class="ch-empty">No chats yet. Add a friend by their name above.</li>'; }
       else list.innerHTML = r.chats.map((c) => `
         <li><button type="button" data-id="${c.id}">
-          <span class="ch-av${c.friend.online ? " online" : ""}" data-u="${c.friend.id}">${esc(initials(c.friend.display))}</span>
-          <span class="ch-row"><strong>${esc(c.friend.display)}</strong><small>${esc(preview(c.last))}</small></span>
+          ${isGroup(c) ? `<span class="ch-av group">${esc(initials(c.group.name))}</span>` : av(c.friend, c.friend.online ? "online" : "", `data-u="${c.friend.id}"`)}
+          <span class="ch-row"><strong>${esc(chatTitle(c))}</strong><small>${esc(preview(c.last, c))}</small></span>
           <span class="ch-meta"><small>${c.last ? when(c.last.at) : ""}</small>${c.unread ? `<b class="ch-dot">${c.unread > 99 ? "99+" : c.unread}</b>` : ""}</span>
         </button></li>`).join("");
       for (const b of list.querySelectorAll("button[data-id]")) b.onclick = () => openRoom(r.chats.find((c) => c.id === b.dataset.id));
       setBadge(r.chats.reduce((a, c) => a + c.unread, 0));
     } catch (ex) { if (ex.status !== 401) toast(ex.message); }
   }
-  function preview(m) {
+  // A chat is either one friend or a group; these give its name and picture text.
+  const chatTitle = (c) => (c.group ? c.group.name : c.friend.display);
+  const isGroup = (c) => !!(c && c.group);
+  function senderName(c, uid) {
+    if (me && uid === me.id) return "You";
+    if (!c) return "";
+    if (c.group) { const m = c.group.members.find((x) => x.id === uid); return m ? m.display : "Someone"; }
+    return c.friend.display;
+  }
+  function preview(m, c) {
     if (!m) return "Say hi 👋";
-    const who = me && m.sender === me.id ? "You: " : "";
+    const who = me && m.sender === me.id ? "You: " : isGroup(c) ? senderName(c, m.sender) + ": " : "";
     if (m.kind === "image") return who + "📷 Photo";
     if (m.kind === "voice") return who + "🎤 Voice note";
     return who + m.body;
@@ -288,8 +310,159 @@
     if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
   }
+  // ----- Safety: block and report -----
+  function safetyItems(friend, chatId) {
+    if (!friend) return [];
+    return [
+      { label: `⚠️ Report ${friend.display}`, run: () => reportSheet(friend, chatId) },
+      { label: `🚫 Block ${friend.display}`, danger: true, run: () => blockSheet(friend) },
+    ];
+  }
+  const REASONS = [
+    ["mean", "Being mean or bullying"],
+    ["inappropriate", "Inappropriate photos or words"],
+    ["unsafe", "Makes me feel unsafe"],
+    ["spam", "Spam or a scam"],
+    ["pretending", "Pretending to be someone else"],
+    ["other", "Something else"],
+  ];
+  function reportSheet(person, chatId, messageId) {
+    sheet(`<p class="ch-sheet-title">Report ${esc(person.display)}<small>What's going on? They won't know you reported them.</small></p>`,
+      REASONS.map(([reason, label]) => ({ label, run: async () => {
+        try {
+          await api("/reports", { body: { userId: person.id, reason, chatId, messageId } });
+          sheet(`<p class="ch-sheet-title">Thanks for telling us.<small>The report is saved with their recent messages. You can also block them so they can't reach you.</small></p>`, [
+            { label: `🚫 Block ${person.display}`, danger: true, run: () => doBlock(person) },
+          ]);
+          if (reason === "unsafe" && window.Pip && window.Pip.say) window.Pip.say("If you ever feel unsafe, tell a grown-up you trust. You did the right thing.", { replace: true });
+        } catch (ex) { toast(ex.message); }
+      } })));
+  }
+  function blockSheet(person) {
+    sheet(`<p class="ch-sheet-title">Block ${esc(person.display)}?<small>They won't be able to find you, message you, call you or see when you're online. They aren't told. You can unblock them later from your account menu.</small></p>`, [
+      { label: `Block ${person.display}`, danger: true, run: () => doBlock(person) },
+    ]);
+  }
+  async function doBlock(person) {
+    try {
+      await api("/blocks", { body: { userId: person.id } });
+      blocked.add(person.id);
+      toast(`${person.display} is blocked`);
+      loadLobbyFriends();
+      if (view === "room" && room && !isGroup(room.chat) && room.friend && room.friend.id === person.id) openList();
+      else if (view === "room" && room) openRoom(room.chat);
+      else if (view === "list") loadList();
+    } catch (ex) { toast(ex.message); }
+  }
+  async function openBlocked() {
+    let list = [];
+    try { list = (await api("/blocks")).users; } catch (ex) { toast(ex.message); return; }
+    sheet(`<p class="ch-sheet-title">Blocked people<small>${list.length ? "Tap someone to unblock them." : "You haven't blocked anyone."}</small></p>`,
+      list.map((u) => ({ label: `Unblock ${u.display}`, run: async () => {
+        try { await api("/unblock", { body: { userId: u.id } }); blocked.delete(u.id); toast(`${u.display} is unblocked`); loadLobbyFriends(); if (view === "list") loadList(); }
+        catch (ex) { toast(ex.message); }
+      } })));
+  }
+
+  // ----- Profiles -----
+  // Someone's profile card: big avatar, name, bio, and what you can do.
+  function showProfile(u, c) {
+    const wrap = document.createElement("div");
+    wrap.className = "ch-sheet-wrap";
+    const status = u.inCall ? "In a call" : u.online ? "On Huddle now" : "Away";
+    wrap.innerHTML = `<div class="ch-sheet ch-profile" role="dialog" aria-label="${esc(u.display)}">
+      ${av(u, "xl")}
+      <strong class="pf-name">${esc(u.display)}</strong>
+      <span class="pf-status${u.online ? " on" : ""}">${status}</span>
+      ${u.bio ? `<p class="pf-bio">${esc(u.bio)}</p>` : ""}
+      <div class="pf-actions">
+        ${c ? '<button type="button" class="pf-call" data-p="call">📹 Call</button>' : ""}
+        <button type="button" data-p="report">⚠️ Report</button>
+        <button type="button" class="danger" data-p="block">🚫 Block</button>
+      </div>
+      <button type="button" class="cancel">Close</button></div>`;
+    (root.hidden ? document.body : root).appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.onclick = (e) => { if (e.target === wrap) close(); };
+    wrap.querySelector(".cancel").onclick = close;
+    const act = (k, fn) => { const b = wrap.querySelector(`[data-p="${k}"]`); if (b) b.onclick = () => { close(); fn(); }; };
+    act("call", () => startCallWith());
+    act("report", () => reportSheet(u, c && c.id));
+    act("block", () => blockSheet(u));
+  }
+  // Square-crop a picked photo to 400x400 so profile pictures are small and quick to load.
+  async function squarePhoto(f) {
+    const url = URL.createObjectURL(f);
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      const side = Math.min(img.naturalWidth, img.naturalHeight), size = Math.min(400, side);
+      const cv = document.createElement("canvas");
+      cv.width = cv.height = size;
+      cv.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+      return await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.86));
+    } finally { URL.revokeObjectURL(url); }
+  }
+  function editProfile() {
+    if (!me) return;
+    const draft = { photo: me.photo || null, color: me.color || "blue", bio: me.bio || "" };
+    const wrap = document.createElement("div");
+    wrap.className = "ch-overlay";
+    wrap.innerHTML = `
+      <div class="ch-panel" role="dialog" aria-label="Edit my profile">
+        <header class="ch-head"><button class="ch-icon" data-act="x" aria-label="Close">${IC.back}</button><strong>My profile</strong><span class="ch-sp"></span></header>
+        <div class="pf-edit">
+          <div class="pf-preview"></div>
+          <strong class="pf-name">${esc(me.display)}</strong>
+          <div class="pf-photo-btns">
+            <button type="button" class="btn small" data-act="pick">📷 ${me.photo ? "Change photo" : "Add a photo"}</button>
+            <button type="button" class="pf-remove" data-act="remove" ${me.photo ? "" : "hidden"}>Remove photo</button>
+          </div>
+          <input type="file" accept="image/*" hidden>
+          <p class="pf-label">Avatar color</p>
+          <div class="pf-colors">${COLOR_NAMES.map((n) => `<button type="button" data-c="${n}" aria-label="${n}" style="background:${avBg(n)}"></button>`).join("")}</div>
+          <p class="pf-label">About me <small>(up to 80 letters)</small></p>
+          <input class="ch-gname pf-bio-in" maxlength="80" placeholder="Like: Roblox builder, loves Connect Four" value="${esc(draft.bio)}">
+          <button type="button" class="btn primary pf-save">Save</button>
+        </div>
+      </div>`;
+    root.appendChild(wrap);
+    const $ = (s) => wrap.querySelector(s);
+    const close = () => wrap.remove();
+    const draw = () => {
+      $(".pf-preview").innerHTML = av({ ...me, ...draft }, "xl");
+      for (const b of wrap.querySelectorAll("[data-c]")) b.classList.toggle("on", b.dataset.c === draft.color);
+      $('[data-act="remove"]').hidden = !draft.photo;
+    };
+    draw();
+    $('[data-act="x"]').onclick = close;
+    for (const b of wrap.querySelectorAll("[data-c]")) b.onclick = () => { draft.color = b.dataset.c; draw(); };
+    const file = $("input[type=file]");
+    $('[data-act="pick"]').onclick = () => file.click();
+    file.onchange = async () => {
+      const f = file.files && file.files[0]; file.value = "";
+      if (!f) return;
+      try { toast("Uploading photo…", 1500); draft.photo = await upload(await squarePhoto(f), "image/jpeg"); draw(); }
+      catch (ex) { toast(ex.message); }
+    };
+    $('[data-act="remove"]').onclick = () => { draft.photo = null; draw(); };
+    $(".pf-save").onclick = async () => {
+      draft.bio = $(".pf-bio-in").value;
+      try {
+        const r = await api("/profile", { body: draft });
+        me = r.user;
+        window.HuddleAccount.user = me;
+        if (H().profileChanged) H().profileChanged();
+        toast("Profile saved");
+        close();
+        if (view === "list") loadList();
+      } catch (ex) { toast(ex.message); }
+    };
+  }
+
   function openAccountMenu() {
     sheet(`<p class="ch-sheet-title">Signed in as <b>${esc(me ? me.display : "")}</b></p>`, [
+      { label: "👤 Edit my profile", run: editProfile },
+      { label: "🚫 Blocked people", run: openBlocked },
       { label: "Sign out", danger: true, run: async () => { try { await api("/logout", { method: "POST" }); } catch {} signedOut(); } },
     ]);
   }
@@ -304,12 +477,12 @@
   // ----- One chat -----
   function openRoom(c) {
     view = "room";
-    room = { id: c.id, friend: c.friend, msgs: new Map(), oldest: null, newest: 0, more: false, loading: false, hasNewer: false };
+    room = { id: c.id, chat: c, friend: c.friend, msgs: new Map(), oldest: null, newest: 0, more: false, loading: false, hasNewer: false };
     root.innerHTML = `
       <header class="ch-head">
         <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
-        <span class="ch-who"><span class="ch-av sm">${esc(initials(c.friend.display))}</span><strong>${esc(c.friend.display)}</strong></span>
-        <button class="ch-icon" data-act="call" aria-label="Video call ${esc(c.friend.display)}" title="Call">${IC.video}</button>
+        <span class="ch-who" ${isGroup(c) ? "" : 'data-act="who" role="button" tabindex="0"'}>${isGroup(c) ? `<span class="ch-av sm group">${esc(initials(chatTitle(c)))}</span>` : av(c.friend, "sm")}<span class="ch-who-text"><strong>${esc(chatTitle(c))}</strong>${isGroup(c) ? `<small>${c.group.members.length} people</small>` : ""}</span></span>
+        <button class="ch-icon" data-act="call" aria-label="Video call ${esc(chatTitle(c))}" title="Call">${IC.video}</button>
         <button class="ch-icon" data-act="menu" aria-label="Menu" title="Menu">${IC.menu}</button>
       </header>
       <div class="ch-msgs" tabindex="-1"><div class="ch-older" hidden>Loading…</div><div class="ch-stream"></div><button class="ch-jump" type="button" hidden>Back to latest ↓</button></div>
@@ -328,6 +501,7 @@
     const $ = (sel) => root.querySelector(sel);
     $('[data-act="back"]').onclick = goBack;
     $('[data-act="menu"]').onclick = openRoomMenu;
+    if (!isGroup(c)) $('[data-act="who"]').onclick = () => showProfile(c.friend, c);
     $('[data-act="call"]').onclick = startCallWith;
     const form = $(".ch-compose");
     const file = form.querySelector("input[type=file]");
@@ -450,7 +624,7 @@
     const el = document.createElement("div");
     el.className = "ch-msg" + (mine ? " mine" : "") + (m.pinned ? " pinned" : "");
     el.dataset.id = m.id; el.dataset.n = m.n; el.dataset.at = m.at;
-    el.innerHTML = bubbleHtml(m);
+    el.innerHTML = (!mine && room && isGroup(room.chat) ? `<span class="ch-from">${esc(senderName(room.chat, m.sender))}</span>` : "") + bubbleHtml(m);
     wireBubble(el, m);
     return el;
   }
@@ -495,6 +669,11 @@
   function messageMenu(m) {
     const items = [{ label: m.pinned ? "Unpin" : "Pin message", run: () => pin(m, !m.pinned) }];
     if (m.kind === "text") items.push({ label: "Copy", run: () => { navigator.clipboard && navigator.clipboard.writeText(m.body).then(() => toast("Copied")).catch(() => {}); } });
+    if (me && m.sender !== me.id && room) {
+      const who = { id: m.sender, display: senderName(room.chat, m.sender) };
+      items.push({ label: "⚠️ Report this message", run: () => reportSheet(who, room.id, m.id) });
+      if (isGroup(room.chat)) items.push({ label: `🚫 Block ${who.display}`, danger: true, run: () => blockSheet(who) });
+    }
     sheet(`<div class="ch-sheet-preview">${esc(previewText(m))}</div>`, items);
   }
   const previewText = (m) => (m.kind === "image" ? "📷 Photo" : m.kind === "voice" ? `🎤 Voice note (${fmtDur(m.duration)})` : m.body);
@@ -505,10 +684,19 @@
 
   // ----- ☰ menu and pinned messages -----
   function openRoomMenu() {
-    sheet(`<p class="ch-sheet-title">${esc(room.friend.display)}</p>`, [
+    const c = room.chat;
+    const items = [
       { label: "📌 Pinned messages", run: openPinned },
-      { label: "📹 Start a video call", run: startCallWith },
-    ]);
+      { label: isGroup(c) ? "📹 Call the whole group" : "📹 Start a video call", run: startCallWith },
+    ];
+    if (isGroup(c)) {
+      items.push({ label: "👥 People in this group", run: () => showMembers(c) });
+      items.push({ label: "➕ Add a friend to the group", run: () => addToGroupSheet(c) });
+      items.push({ label: "✏️ Rename the group", run: () => renameGroup(c) });
+      items.push({ label: "Leave the group", danger: true, run: () => leaveGroup(c) });
+    }
+    if (!isGroup(c)) items.push(...safetyItems(c.friend, c.id));
+    sheet(`<p class="ch-sheet-title">${esc(chatTitle(c))}</p>`, items);
   }
   async function openPinned() {
     const r = room;
@@ -522,7 +710,7 @@
         <header class="ch-head"><button class="ch-icon" data-act="x" aria-label="Close">${IC.back}</button><strong>Pinned messages</strong><span class="ch-sp"></span></header>
         <ul class="ch-pins">${list.length ? list.map((m) => `
           <li><button type="button" data-id="${esc(m.id)}">
-            <span class="ch-pin-who">${esc(me && m.sender === me.id ? "You" : r.friend.display)} · ${when(m.at)}</span>
+            <span class="ch-pin-who">${esc(senderName(r.chat, m.sender))} · ${when(m.at)}</span>
             <span class="ch-pin-text">${m.kind === "image" ? `<img src="/api/media/${esc(m.mediaId)}" alt="">` : ""}${esc(previewText(m))}</span>
           </button></li>`).join("") : '<li class="ch-empty">Nothing pinned yet. Hold a message to pin it.</li>'}</ul>
       </div>`;
@@ -556,7 +744,9 @@
     const h = H();
     if (!h.joinRoom) return;
     const code = h.newRoomCode();
+    const r = room;
     sendText(`📹 Join my video call: ${location.origin}/r/${code}`);
+    if (r) api(`/chats/${r.id}/invite`, { body: { room: code } }).catch(() => {});
     hide();
     if (history.state && history.state.huddleChats) history.back();
     setTimeout(() => h.joinRoom(code), 50);
@@ -687,6 +877,79 @@
   }
 
   // ----- Bottom sheet menu -----
+  // ----- Group chats -----
+  // A picker of your friends (people only), used to start a group or add someone to one.
+  function pickFriends({ title, button, multi, exclude = [], withName, onDone }) {
+    const people = chatsCache.filter((c) => !isGroup(c)).map((c) => c.friend).filter((f) => !exclude.includes(f.id));
+    const wrap = document.createElement("div");
+    wrap.className = "ch-overlay";
+    wrap.innerHTML = `
+      <div class="ch-panel" role="dialog" aria-label="${esc(title)}">
+        <header class="ch-head"><button class="ch-icon" data-act="x" aria-label="Close">${IC.back}</button><strong>${esc(title)}</strong><span class="ch-sp"></span></header>
+        <div class="ch-body">
+          ${withName ? '<input class="ch-gname" maxlength="40" placeholder="Group name, like Game night" autocomplete="off">' : ""}
+          <ul class="ch-pick">${people.length ? people.map((f) => `
+            <li><label><input type="${multi ? "checkbox" : "radio"}" name="p" value="${esc(f.id)}">${av(f, "sm")}<span>${esc(f.display)}</span></label></li>`).join("")
+            : '<li class="ch-empty">Add some friends first, then you can make a group with them.</li>'}</ul>
+          <button class="btn primary ch-pick-go" type="button" ${people.length ? "" : "disabled"}>${esc(button)}</button>
+        </div>
+      </div>`;
+    root.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.querySelector('[data-act="x"]').onclick = close;
+    wrap.querySelector(".ch-pick-go").onclick = async () => {
+      const ids = [...wrap.querySelectorAll("input[name=p]:checked")].map((i) => i.value);
+      const name = withName ? wrap.querySelector(".ch-gname").value.trim() : "";
+      if (withName && !name) { toast("Give the group a name"); return; }
+      if (!ids.length) { toast(multi ? "Pick at least one friend" : "Pick a friend"); return; }
+      if (await onDone(ids, name) !== false) close();
+    };
+  }
+  async function refreshChat(id) {
+    const r = await api("/chats");
+    chatsCache = r.chats;
+    return r.chats.find((x) => x.id === id);
+  }
+  function newGroup() {
+    pickFriends({ title: "New group chat", button: "Make the group", multi: true, withName: true, onDone: async (ids, name) => {
+      try {
+        const r = await api("/groups", { body: { name, members: ids } });
+        const c = await refreshChat(r.chatId);
+        if (c) openRoom(c);
+      } catch (ex) { toast(ex.message); return false; }
+    } });
+  }
+  function showMembers(c) {
+    sheet(`<p class="ch-sheet-title">${esc(c.group.name)} · ${c.group.members.length} people</p>` +
+      c.group.members.map((m) => `<p class="ch-member">${av(m, "sm" + (m.online ? " online" : ""))}${esc(m.display)}${me && m.id === me.id ? " (you)" : ""}</p>`).join(""), []);
+  }
+  function addToGroupSheet(c) {
+    pickFriends({ title: "Add to " + c.group.name, button: "Add", multi: false, exclude: c.group.members.map((m) => m.id), onDone: async (ids) => {
+      try {
+        await api(`/chats/${c.id}/members`, { body: { userId: ids[0] } });
+        const fresh = await refreshChat(c.id);
+        if (fresh && room && room.id === c.id) { room.chat = fresh; openRoom(fresh); }
+        toast("Added to the group");
+      } catch (ex) { toast(ex.message); return false; }
+    } });
+  }
+  async function renameGroup(c) {
+    const name = prompt("New name for the group", c.group.name);
+    if (!name || !name.trim()) return;
+    try {
+      await api(`/chats/${c.id}/name`, { body: { name } });
+      const fresh = await refreshChat(c.id);
+      if (fresh && room && room.id === c.id) openRoom(fresh);
+    } catch (ex) { toast(ex.message); }
+  }
+  function leaveGroup(c) {
+    sheet(`<p class="ch-sheet-title">Leave ${esc(c.group.name)}? You won't see its messages anymore.</p>`, [
+      { label: "Leave the group", danger: true, run: async () => {
+        try { await api(`/chats/${c.id}/leave`, { method: "POST" }); openList(); } catch (ex) { toast(ex.message); }
+      } },
+    ]);
+  }
+
   function sheet(headHtml, items) {
     const wrap = document.createElement("div");
     wrap.className = "ch-sheet-wrap";
@@ -716,7 +979,7 @@
   }
   function drawLobbyFriends() {
     if (!lfList) return;
-    const list = [...lobbyChats].sort((a, b) => (b.friend.online - a.friend.online) || a.friend.display.localeCompare(b.friend.display));
+    const list = lobbyChats.filter((c) => !isGroup(c)).sort((a, b) => (b.friend.online - a.friend.online) || a.friend.display.localeCompare(b.friend.display));
     const on = list.filter((c) => c.friend.online).length;
     lfCount.textContent = list.length ? `${on} online` : "";
     if (!list.length) {
@@ -726,7 +989,7 @@
     }
     lfList.innerHTML = list.slice(0, 8).map((c) => `
       <li class="${c.friend.online ? "on" : ""}">
-        <span class="ch-av sm${c.friend.online ? " online" : ""}${c.friend.inCall ? " busy" : ""}">${esc(initials(c.friend.display))}</span>
+        ${av(c.friend, "sm" + (c.friend.online ? " online" : "") + (c.friend.inCall ? " busy" : ""))}
         <span class="lf-text"><strong>${esc(c.friend.display)}</strong><small>${statusText(c.friend)}</small></span>
         <button type="button" class="lf-chat" data-id="${c.id}" aria-label="Chat with ${esc(c.friend.display)}">${IC.chat || "💬"}</button>
         <button type="button" class="lf-call" data-id="${c.id}">Call</button>
@@ -737,7 +1000,10 @@
     if (more) more.onclick = () => { show(); openList(); };
   }
   function updatePresence(m) {
-    for (const c of [...lobbyChats, ...chatsCache]) if (c.friend.id === m.userId) Object.assign(c.friend, { online: m.online, inCall: m.inCall });
+    for (const c of [...lobbyChats, ...chatsCache]) {
+      if (c.group) for (const x of c.group.members) if (x.id === m.userId) Object.assign(x, { online: m.online, inCall: m.inCall });
+    }
+    for (const c of [...lobbyChats, ...chatsCache]) if (c.friend && c.friend.id === m.userId) Object.assign(c.friend, { online: m.online, inCall: m.inCall });
     drawLobbyFriends();
     if (view === "list") for (const av of root.querySelectorAll(`.ch-av[data-u="${m.userId}"]`)) av.classList.toggle("online", m.online);
   }
@@ -753,7 +1019,9 @@
     try {
       await api(`/chats/${c.id}/messages`, { body: { kind: "text", body: `📹 Join my video call: ${location.origin}/r/${code}` } });
       const r = await api(`/chats/${c.id}/invite`, { body: { room: code } });
-      toast(r.online ? `Asked ${c.friend.display} to join` : `${c.friend.display} isn't on Huddle right now. They'll see the link in your chat.`, 3500);
+      const who = chatTitle(c);
+      toast(r.group ? (r.online ? `Asked ${who} to join` : `No one in ${who} is on Huddle right now. They'll see the link in the chat.`)
+        : r.online ? `Asked ${who} to join` : `${who} isn't on Huddle right now. They'll see the link in your chat.`, 3500);
     } catch (ex) { toast(ex.message); }
   }
   // An in-app card only (no sound, no notification): it shows while Huddle is open.
@@ -767,8 +1035,8 @@
     inviteEl.className = "invite-card";
     inviteEl.setAttribute("role", "dialog");
     inviteEl.innerHTML = `
-      <span class="ch-av">${esc(initials(m.from.display))}</span>
-      <span class="ic-text"><strong>${esc(m.from.display)}</strong><small>wants you in a call</small></span>
+      ${av(m.from)}
+      <span class="ic-text"><strong>${esc(m.from.display)}</strong><small>${m.group ? "wants " + esc(m.group) + " in a call" : "wants you in a call"}</small></span>
       <button type="button" class="ic-no">Not now</button>
       <button type="button" class="ic-yes">Join</button>`;
     document.body.appendChild(inviteEl);
@@ -796,6 +1064,7 @@
       const r = await api("/me");
       me = r.user; saved = r.saved;
       window.HuddleAccount.pipChat = !!r.pipChat;
+      blocked = new Set(r.blocked || []);
       if (H().setName) H().setName(me.display);
       connect();
       refreshBadge();

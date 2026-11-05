@@ -1,6 +1,6 @@
 // Huddle service worker: lets the installed app open quickly, and even without a connection.
 // Calls themselves always need the internet; only the app's own files are cached.
-const CACHE = "huddle-v20";
+const CACHE = "huddle-v21";
 const SHELL = [
   "/", "/style.css", "/app.js", "/games/hub.js", "/games/butter.js", "/chats.js", "/pip-brain.js", "/pip.js", "/games/tictactoe.js", "/games/connect4.js", "/games/trivia.js", "/manifest.webmanifest", "/icon.svg",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",

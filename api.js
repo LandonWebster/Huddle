@@ -33,8 +33,9 @@ function presenceOf(userId) {
 async function tellFriends(user) {
   try {
     const chats = await store.listChats(user);
+    const hide = await store.blockSet(user.id);
     const p = presenceOf(user.id);
-    for (const c of chats) push(c.friend.id, { type: "presence", userId: user.id, ...p });
+    for (const c of chats) if (c.friend && !hide.has(c.friend.id)) push(c.friend.id, { type: "presence", userId: user.id, ...p });
   } catch {}
 }
 // From the app's own socket: { type: "presence", inCall }.
@@ -53,7 +54,9 @@ function push(userId, msg) {
   const data = JSON.stringify(msg);
   for (const ws of set) if (ws.readyState === ws.OPEN) ws.send(data);
 }
-const pushChat = (chat, msg) => { push(chat.a, msg); push(chat.b, msg); };
+// skip: people who shouldn't get it (blocked either way with the sender).
+const pushChat = (chat, msg, skip) => { for (const u of store.chatPeople(chat)) if (!skip || !skip.has(u)) push(u, msg); };
+const OFFLINE = { online: false, inCall: false };
 
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -136,7 +139,36 @@ async function handle(req, res, url) {
     const me = await store.userForToken(tokenOf(req));
     if (!me) return json(res, 401, { error: "Sign in first" });
 
-    if (route === "GET /me") return json(res, 200, { user: store.publicUser(me), saved: store.persistent, pipChat: pipAi.enabled() });
+    if (route === "GET /me") return json(res, 200, { user: store.publicUser(me), saved: store.persistent, pipChat: pipAi.enabled(), blocked: await store.blockedByMe(me.id) });
+    if (route === "POST /profile") {
+      const r = await store.updateProfile(me, await readJson(req));
+      if (r.error) return json(res, 400, r);
+      // Friends' open apps refresh their lists so they see the new look.
+      for (const c of await store.listChats(me)) if (c.friend) push(c.friend.id, { type: "chats-changed" });
+      return json(res, 200, r);
+    }
+    if (route === "GET /blocks") return json(res, 200, { users: await store.blockedList(me) });
+    if (route === "POST /blocks") {
+      const { userId } = await readJson(req);
+      const r = await store.block(me, String(userId || ""));
+      if (r.error) return json(res, 400, r);
+      push(r.user.id, { type: "chats-changed" });
+      push(r.user.id, { type: "presence", userId: me.id, ...OFFLINE });
+      return json(res, 200, r);
+    }
+    if (route === "POST /unblock") {
+      const { userId } = await readJson(req);
+      await store.unblock(me, String(userId || ""));
+      push(String(userId || ""), { type: "chats-changed" });
+      tellFriends(me);
+      return json(res, 200, {});
+    }
+    if (route === "POST /reports") {
+      const r = await store.report(me, await readJson(req));
+      if (r.error) return json(res, 400, r);
+      console.log("report saved", me.id);
+      return json(res, 200, {});
+    }
     if (route === "POST /pip") {
       const r = await pipAi.reply(me, await readJson(req));
       return json(res, r.status, r.body);
@@ -151,30 +183,68 @@ async function handle(req, res, url) {
       push(r.friend.id, { type: "chats-changed" });
       return json(res, 200, r);
     }
+    if (route === "POST /groups") {
+      const { name, members } = await readJson(req);
+      const r = await store.createGroup(me, name, members);
+      if (r.error) return json(res, 400, r);
+      for (const u of r.members) push(u, { type: "chats-changed" });
+      return json(res, 200, r);
+    }
     if (route === "GET /chats") {
       const chats = await store.listChats(me);
-      for (const c of chats) Object.assign(c.friend, presenceOf(c.friend.id));
+      const hide = await store.blockSet(me.id);
+      const seen = (id) => (hide.has(id) ? OFFLINE : presenceOf(id));
+      for (const c of chats) {
+        if (c.friend) Object.assign(c.friend, seen(c.friend.id), hide.has(c.friend.id) ? { blockedMe: true } : {});
+        if (c.group) for (const m of c.group.members) Object.assign(m, seen(m.id));
+      }
       return json(res, 200, { chats, saved: store.persistent });
     }
 
     if (parts[0] === "chats" && parts[1]) {
       const chat = await store.chatFor(me, parts[1]);
       if (!chat) return json(res, 404, { error: "Chat not found" });
+      const hide = await store.blockSet(me.id);
+      const iBlocked = new Set(await store.blockedByMe(me.id));
+      const cut = (list) => (iBlocked.size ? list.filter((m) => !iBlocked.has(m.sender)) : list);
+      const blockedHere = !chat.group && hide.has(store.otherId(chat, me));
       if (route === "GET /chats/:id/messages") {
         const after = url.searchParams.get("after");
-        if (after) return json(res, 200, { messages: await store.messagesAfter(chat, after) });
-        return json(res, 200, await store.messages(chat, {
+        if (after) return json(res, 200, { messages: cut(await store.messagesAfter(chat, after)) });
+        const r = await store.messages(chat, {
           before: url.searchParams.get("before"), around: url.searchParams.get("around"), limit: url.searchParams.get("limit"),
-        }));
+        });
+        r.messages = cut(r.messages);
+        return json(res, 200, r);
       }
       // Ask a friend to join your call. Their app shows it only while it's open (no notification).
       if (route === "POST /chats/:id/invite") {
         const { room } = await readJson(req);
         const code = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
         if (!code) return json(res, 400, { error: "No call to invite to" });
-        const friendId = chat.a === me.id ? chat.b : chat.a;
-        push(friendId, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me) });
-        return json(res, 200, { online: presenceOf(friendId).online });
+        if (blockedHere) return json(res, 403, { error: "You can't call this person" });
+        const others = store.chatPeople(chat).filter((u) => u !== me.id && !hide.has(u));
+        for (const u of others) push(u, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me), group: chat.group ? chat.name : null });
+        return json(res, 200, { online: others.some((u) => presenceOf(u).online), group: !!chat.group });
+      }
+      if (chat.group && route === "POST /chats/:id/members") {
+        const { userId } = await readJson(req);
+        const r = await store.addToGroup(me, chat, String(userId || ""));
+        if (r.error) return json(res, 400, r);
+        for (const u of r.members) push(u, { type: "chats-changed" });
+        return json(res, 200, r);
+      }
+      if (chat.group && route === "POST /chats/:id/leave") {
+        const r = await store.leaveGroup(me, chat);
+        for (const u of r.members) push(u, { type: "chats-changed" });
+        return json(res, 200, {});
+      }
+      if (chat.group && route === "POST /chats/:id/name") {
+        const { name } = await readJson(req);
+        const r = await store.renameGroup(chat, name);
+        if (r.error) return json(res, 400, r);
+        for (const u of chat.members) push(u, { type: "chats-changed" });
+        return json(res, 200, r);
       }
       if (route === "GET /chats/:id/pinned") return json(res, 200, { messages: await store.pinnedMessages(chat) });
       if (route === "POST /chats/:id/read") {
@@ -183,6 +253,7 @@ async function handle(req, res, url) {
         return json(res, 200, {});
       }
       if (route === "POST /chats/:id/messages") {
+        if (blockedHere) return json(res, 403, { error: "You can't message this person" });
         if (sendingTooFast(me.id)) return json(res, 429, { error: "Slow down a little" });
         const b = await readJson(req);
         const kind = String(b.kind || "text");
@@ -197,7 +268,7 @@ async function handle(req, res, url) {
           msg = { kind, mediaId: String(b.mediaId), duration, body: String(b.body || "").slice(0, 500) };
         } else return json(res, 400, { error: "Unknown message type" });
         const saved = await store.addMessage(me, chat, msg);
-        pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved });
+        pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved }, hide);
         return json(res, 200, { message: saved });
       }
     }
