@@ -579,3 +579,8 @@ input[type=range] { padding: 0; border: 0; background: transparent; accent-color
 .ch-viewer { position: absolute; inset: 0; z-index: 80; background: #000; display: grid; place-items: center; }
 .ch-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .ch-viewer .ch-icon { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; background: rgba(255,255,255,.12); }
+.ch-pw { position: relative; display: flex; }
+.ch-pw input { padding-right: 48px; }
+.ch-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; border-radius: 10px; }
+.ch-eye svg { width: 22px; height: 22px; }
+.ch-eye[aria-pressed="true"] { color: #22d3ee; }

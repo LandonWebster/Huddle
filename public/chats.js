@@ -26,6 +26,8 @@
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>',
     pin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 3l6 6-3 1-4 4 1 5-2 2-4-4-5 5-1-1 5-5-4-4 2-2 5 1 4-4z"/></svg>',
     video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="M16 10l6-4v12l-6-4z"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+    eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7c2 0 3.8.7 5.2 1.6M22 12s-3.5 7-10 7c-2 0-3.8-.7-5.2-1.6"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   };
 
@@ -128,15 +130,25 @@
         </div>
         <form class="ch-form">
           <label><span>Name</span><input name="username" maxlength="20" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="e.g. landon_w" required></label>
-          <label><span>Password</span><input name="password" type="password" minlength="6" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" required></label>
+          <label><span>Password</span><span class="ch-pw"><input name="password" type="password" minlength="6" maxlength="25" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" required><button type="button" class="ch-eye" aria-label="Show password" aria-pressed="false">${IC.eye}</button></span></label>
           <p class="ch-err" role="alert"></p>
           <button class="btn primary" type="submit">${mode === "signup" ? "Make my account" : "Sign in"}</button>
-          ${mode === "signup" ? '<p class="ch-fine">Names can use letters, numbers, _ and . (3 to 20).</p>' : ""}
+          ${mode === "signup" ? '<p class="ch-fine">Names can use letters, numbers, _ and . (3 to 20). Passwords can use any letters, numbers and symbols (6 to 25).</p>' : ""}
         </form>
       </div>`;
     root.querySelector('[data-act="back"]').onclick = goBack;
     for (const b of root.querySelectorAll("[data-mode]")) b.onclick = () => openAuth(b.dataset.mode);
     const form = root.querySelector("form");
+    // Eye button: show or hide what you typed.
+    const eye = form.querySelector(".ch-eye");
+    eye.onclick = () => {
+      const showing = form.password.type === "text";
+      form.password.type = showing ? "password" : "text";
+      eye.innerHTML = showing ? IC.eye : IC.eyeOff;
+      eye.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+      eye.setAttribute("aria-pressed", String(!showing));
+      form.password.focus();
+    };
     form.onsubmit = async (e) => {
       e.preventDefault();
       const err = form.querySelector(".ch-err");

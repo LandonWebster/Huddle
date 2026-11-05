@@ -85,7 +85,9 @@ async function handle(req, res, url) {
     if (route === "POST /signup") {
       const { username, password } = await readJson(req);
       if (!NAME_RE.test(String(username || ""))) return json(res, 400, { error: "Names are 3 to 20 letters, numbers, _ or ." });
-      if (String(password || "").length < 6) return json(res, 400, { error: "Use a password with at least 6 characters" });
+      // Any letters, numbers and symbols, 6 to 25 characters.
+      const pwLen = [...String(password || "")].length;
+      if (pwLen < 6 || pwLen > 25) return json(res, 400, { error: "Passwords are 6 to 25 characters" });
       const r = await store.createUser(String(username), String(password));
       if (r.error) return json(res, 409, r);
       return json(res, 200, { token: await store.newSession(r.user.id), user: store.publicUser(r.user) });
