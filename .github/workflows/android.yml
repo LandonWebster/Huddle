@@ -1,0 +1,92 @@
+name: Android app
+
+# Builds the Huddle Android app (APK) and publishes it as a download on the Releases page:
+# https://github.com/LandonWebster/Huddle/releases/latest/download/huddle.apk
+# The app loads the live site, so web changes go out without a new APK. This only needs to
+# run when the Android wrapper itself changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HUDDLE_BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
+      - name: Install Capacitor
+        working-directory: native
+        run: npm ci
+
+      - name: Sync Android project
+        working-directory: native
+        run: npx cap sync android
+
+      - name: Unlock the release key
+        env:
+          HUDDLE_KEY_PASS: ${{ secrets.HUDDLE_KEY_PASS }}
+        run: |
+          if [ -z "$HUDDLE_KEY_PASS" ]; then
+            echo "::warning::HUDDLE_KEY_PASS secret is not set; building a test-signed APK instead."
+            exit 0
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in native/android/app/huddle-release.keystore.enc \
+            -out "$RUNNER_TEMP/huddle.keystore" -pass env:HUDDLE_KEY_PASS
+          echo "HUDDLE_KEYSTORE=$RUNNER_TEMP/huddle.keystore" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        working-directory: native/android
+        env:
+          HUDDLE_KEY_PASS: ${{ secrets.HUDDLE_KEY_PASS }}
+        run: |
+          chmod +x gradlew
+          if [ -n "$HUDDLE_KEYSTORE" ]; then
+            ./gradlew --no-daemon assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/huddle.apk"
+            echo "SIGNED=release" >> "$GITHUB_ENV"
+          else
+            ./gradlew --no-daemon assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/huddle.apk"
+            echo "SIGNED=test" >> "$GITHUB_ENV"
+          fi
+          ls -la "$RUNNER_TEMP/huddle.apk"
+
+      - name: Publish download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-${{ github.run_number }}
+          name: Huddle for Android (build ${{ github.run_number }})
+          make_latest: "true"
+          files: ${{ runner.temp }}/huddle.apk
+          body: |
+            Download **huddle.apk** below on your Android phone, open it, and tap Install.
+            If Android asks, allow your browser to install apps.
+
+            Signing: ${{ env.SIGNED }}

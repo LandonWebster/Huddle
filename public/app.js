@@ -57,6 +57,16 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch {} },
   };
 
+  // ---------- Android app ----------
+  // Inside the Huddle Android app, the page can ask Android to keep the call running in the
+  // background and to share the phone screen. In a normal browser these are all no-ops.
+  const Cap = window.Capacitor;
+  const isNativeApp = !!(Cap && typeof Cap.nativePromise === "function" &&
+    Cap.getPlatform && Cap.getPlatform() === "android" &&
+    (Cap.PluginHeaders || []).some((h) => h.name === "HuddleNative"));
+  const native = (method, opts) => (isNativeApp ? Cap.nativePromise("HuddleNative", method, opts || {}) : Promise.resolve());
+  if (isNativeApp) document.documentElement.classList.add("native-app");
+
   fetch("/config").then((r) => r.json()).then((c) => (config = c)).catch(() => {});
 
   // ---------- Helpers ----------
@@ -422,7 +432,12 @@
     ws.onclose = () => {
       els.startBtn.disabled = false;
       if (room && !leaving) {
-        if (away) {
+        if (away && isNativeApp) {
+          // The Android app keeps running in the background, so reconnect right away.
+          const code = room;
+          leaveRoom(true);
+          setTimeout(() => { if (!room) joinRoom(code); }, 1500);
+        } else if (away) {
           // The phone dropped the connection while locked. Rejoin when they come back.
           rejoinCode = room;
           leaveRoom();
@@ -453,6 +468,7 @@
         myId = msg.id;
         room = msg.room;
         enterCallUI();
+        native("startCall").catch(() => {});
         // The newcomer calls everyone already in the room.
         for (const p of msg.peers) createPeer(p.id, p.name, p.state, true);
         updateCount();
@@ -716,8 +732,9 @@
     updateCount();
   }
 
-  function leaveRoom() {
+  function leaveRoom(keepService) {
     leaving = true;
+    if (!keepService) native("endCall").catch(() => {});
     if (local.sharing) stopShare();
     exitFullscreen(true);
     for (const id of [...peers.keys()]) removePeer(id);
@@ -746,8 +763,9 @@
   // only appears where it works: Chrome, Edge, Firefox and Safari on computers.
   const shareBtn = $("shareBtn");
   const SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4M12 13V8M9.5 10.5 12 8l2.5 2.5"/></svg>';
-  const canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) &&
-    !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  // The Huddle Android app can share the screen too, through Android's own screen capture.
+  const canShare = isNativeApp || (!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) &&
+    !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
   shareBtn.hidden = !canShare;
   shareBtn.innerHTML = SHARE_ICON;
   local.sharing = false;
@@ -760,9 +778,55 @@
     const self = peers.get("self");
     if (self) self.tile.el.classList.toggle("sharing", local.sharing);
   }
+  // Android app: Android sends screen frames as pictures; we paint them onto a canvas and
+  // send that canvas as the video, so everyone in the call sees the phone screen.
+  let nativeShare = null;
+  async function startNativeShare() {
+    try {
+      await native("startScreenShare");
+    } catch (e) {
+      if (!/denied/i.test((e && (e.message || e.code)) || "")) toast("Couldn't share your screen");
+      return null;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 720; canvas.height = 1280;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const stream = canvas.captureStream(0);
+    const t = stream.getVideoTracks()[0];
+    const s = { canvas, ctx, track: t, busy: false, listeners: [] };
+    s.listeners.push(Cap.addListener("HuddleNative", "screenFrame", (f) => {
+      if (s.busy || !f || !f.data) return; // drop frames while the last one is still drawing
+      s.busy = true;
+      const img = new Image();
+      img.onload = () => {
+        if (canvas.width !== f.width || canvas.height !== f.height) { canvas.width = f.width; canvas.height = f.height; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (t.requestFrame) t.requestFrame();
+        s.busy = false;
+      };
+      img.onerror = () => { s.busy = false; };
+      img.src = "data:image/jpeg;base64," + f.data;
+    }));
+    s.listeners.push(Cap.addListener("HuddleNative", "screenShareStopped", () => stopShare()));
+    nativeShare = s;
+    return t;
+  }
+  function endNativeShare() {
+    const s = nativeShare;
+    if (!s) return;
+    nativeShare = null;
+    for (const l of s.listeners) { try { l.remove(); } catch {} }
+    try { s.track.stop(); } catch {}
+    native("stopScreenShare").catch(() => {});
+  }
+
   async function startShare() {
     let screen;
-    try {
+    if (isNativeApp) {
+      screen = await startNativeShare();
+      if (!screen) return;
+    } else try {
       const st = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: false });
       screen = st.getVideoTracks()[0];
     } catch (e) {
@@ -782,6 +846,7 @@
   async function stopShare() {
     if (!local.sharing) return;
     local.sharing = false;
+    endNativeShare();
     let cam = null;
     if (camWasOn) { try { cam = await getTrack("video"); } catch {} }
     setLocalTrack("video", cam);
@@ -790,7 +855,7 @@
     renderLocalState();
   }
   shareBtn.onclick = () => (local.sharing ? stopShare() : startShare());
-  els.leaveBtn.onclick = leaveRoom;
+  els.leaveBtn.onclick = () => leaveRoom();
   // One side panel at a time: chat or game.
   let currentPanel = null;
   function openPanel(name) {
@@ -1048,7 +1113,24 @@
   let installEvent = window.__installEvent || null;
   const SEEN_KEY = "huddle:installPromptSeen";
 
+  // Android phones can get the full Huddle app (screen sharing, keeps running when locked).
+  const APK_URL = "https://github.com/LandonWebster/Huddle/releases/latest/download/huddle.apk";
+  const apkBlock = () =>
+    `<a class="btn primary apk-btn" href="${APK_URL}" download>Download the Android app</a>` +
+    `<ol class="steps apk-steps">` +
+    `<li><span>Open ${key("", "huddle.apk")} when it finishes downloading</span></li>` +
+    `<li><span>If Android asks, tap ${key("", "Settings")} and turn on ${key("", "Allow from this source")}, then go back</span></li>` +
+    `<li><span>Tap ${key("", "Install")}</span></li>` +
+    `</ol>` +
+    `<p class="sheet-note">The app adds screen sharing and keeps your call going when you lock your phone. Chrome may say the file could be harmful because it isn't from the Play Store; tap ${key("", "Download anyway")}.</p>`;
   function renderSheet() {
+    const sub = $("sheetSub");
+    if (isAndroid) {
+      sheetInstall.hidden = true;
+      sub.textContent = "Free, no Play Store needed. Download it straight to your phone.";
+      sheetBody.innerHTML = apkBlock();
+      return;
+    }
     if (installEvent) {
       // The browser can install it in one tap.
       sheetBody.innerHTML = '<p class="sheet-note">One tap and Huddle is added to your home screen and app list.</p>';
@@ -1094,7 +1176,7 @@
     } catch { return false; }
     return true;
   }
-  getAppBtn.onclick = async () => { if (!(await startInstall())) openSheet(); };
+  getAppBtn.onclick = async () => { if (isAndroid || !(await startInstall())) openSheet(); };
   sheetInstall.onclick = async () => { if (!(await startInstall())) renderSheet(); };
 
   // Chrome, Edge, Opera and Samsung Internet hand us a real install offer (caught in index.html).
@@ -1104,7 +1186,7 @@
   });
   window.addEventListener("appinstalled", () => { getAppBtn.hidden = true; sheet.hidden = true; });
 
-  if (!isStandalone()) {
+  if (!isStandalone() && !isNativeApp) {
     getAppBtn.hidden = false;
     // First time someone opens the link, show the popup on its own (once per device).
     if (store.get(SEEN_KEY) !== "1") setTimeout(() => { if (!room) openSheet(); }, 900);

@@ -1,0 +1,128 @@
+package com.landonwebster.huddle;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.media.projection.MediaProjectionManager;
+
+import androidx.activity.result.ActivityResult;
+import androidx.core.content.ContextCompat;
+
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+/**
+ * Bridge between the Huddle web app and Android.
+ *
+ *  startCall / endCall         keep the call running when the phone is locked or you switch apps
+ *  startScreenShare / stop...  share the phone screen (Android shows its own "start recording?" prompt)
+ *
+ * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
+ */
+@CapacitorPlugin(name = "HuddleNative")
+public class HuddleNativePlugin extends Plugin {
+    private static HuddleNativePlugin instance;
+
+    @Override
+    public void load() {
+        instance = this;
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (instance == this) instance = null;
+    }
+
+    static void emitFrame(String jpegBase64, int width, int height) {
+        HuddleNativePlugin p = instance;
+        if (p == null) return;
+        JSObject data = new JSObject();
+        data.put("data", jpegBase64);
+        data.put("width", width);
+        data.put("height", height);
+        p.notifyListeners("screenFrame", data);
+    }
+
+    static void emitShareStopped() {
+        HuddleNativePlugin p = instance;
+        if (p == null) return;
+        p.notifyListeners("screenShareStopped", new JSObject());
+    }
+
+    private boolean granted(String perm) {
+        return ContextCompat.checkSelfPermission(getContext(), perm) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void send(String action, Intent extras) {
+        Context ctx = getContext();
+        Intent i = extras != null ? extras : new Intent();
+        i.setClass(ctx, CallService.class);
+        i.setAction(action);
+        ContextCompat.startForegroundService(ctx, i);
+    }
+
+    @PluginMethod
+    public void startCall(PluginCall call) {
+        // Android only lets the camera and mic keep running in the background when they were allowed first.
+        if (!granted(Manifest.permission.CAMERA) && !granted(Manifest.permission.RECORD_AUDIO)) {
+            call.resolve(new JSObject().put("running", false));
+            return;
+        }
+        try {
+            send(CallService.ACTION_START, null);
+            call.resolve(new JSObject().put("running", true));
+        } catch (Exception e) {
+            call.reject("Couldn't keep the call running in the background", e);
+        }
+    }
+
+    @PluginMethod
+    public void endCall(PluginCall call) {
+        try {
+            getContext().stopService(new Intent(getContext(), CallService.class));
+        } catch (Exception ignored) {}
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void startScreenShare(PluginCall call) {
+        MediaProjectionManager mpm = (MediaProjectionManager) getContext().getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (mpm == null) {
+            call.reject("Screen sharing isn't available on this phone");
+            return;
+        }
+        startActivityForResult(call, mpm.createScreenCaptureIntent(), "onShareConsent");
+    }
+
+    @ActivityCallback
+    private void onShareConsent(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+            call.reject("denied", "DENIED");
+            return;
+        }
+        try {
+            Intent i = new Intent();
+            i.putExtra(CallService.EXTRA_RESULT_CODE, result.getResultCode());
+            i.putExtra(CallService.EXTRA_RESULT_DATA, result.getData());
+            send(CallService.ACTION_SHARE, i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Couldn't start screen sharing", e);
+        }
+    }
+
+    @PluginMethod
+    public void stopScreenShare(PluginCall call) {
+        try {
+            send(CallService.ACTION_STOP_SHARE, null);
+        } catch (Exception ignored) {}
+        call.resolve();
+    }
+}

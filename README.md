@@ -59,3 +59,14 @@ TURN_URL=turn:your.turn.host:3478,turns:your.turn.host:443
 TURN_USERNAME=...
 TURN_CREDENTIAL=...
 ```
+
+## Android app
+
+`native/` wraps the live site in a Capacitor Android app that adds phone screen sharing
+(Android MediaProjection) and keeps calls running in the background (a silent foreground
+service; Huddle never asks for notification permission). GitHub Actions
+(`.github/workflows/android.yml`) builds it on every change under `native/` and publishes
+`huddle.apk` to Releases: https://github.com/LandonWebster/Huddle/releases/latest/download/huddle.apk
+
+Release signing: the key is committed encrypted (`native/android/app/huddle-release.keystore.enc`);
+the `HUDDLE_KEY_PASS` repository secret unlocks it. Without the secret CI makes a test-signed APK.
