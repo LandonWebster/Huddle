@@ -140,6 +140,7 @@
     setCtl(els.speakerBtn, !sound.silent && sound.master > 0, I.speaker, I.speakerOff);
     els.volumePop.classList.toggle("silent", sound.silent);
     els.silentToggle.checked = sound.silent;
+    renderMuteApp();
     els.masterVol.value = String(Math.round(sound.master * 100));
     els.masterVolOut.textContent = `${Math.round(sound.master * 100)}%`;
   }
@@ -203,12 +204,26 @@
   els.speakerBtn.onclick = (e) => { e.stopPropagation(); toggleVolumePop(els.volumePop.hidden); };
   els.volumePop.onclick = (e) => e.stopPropagation();
   document.addEventListener("click", () => { if (!els.volumePop.hidden) toggleVolumePop(false); });
-  els.silentToggle.onchange = () => {
-    sound.silent = els.silentToggle.checked;
-    store.set("huddle:silent", sound.silent ? "1" : "0");
+  // Mute Huddle: one switch for every sound in the app (friends in calls, Pip's voice, games).
+  function setSilent(on) {
+    sound.silent = on;
+    store.set("huddle:silent", on ? "1" : "0");
     applyAllVolumes();
-    toast(sound.silent ? "Silent mode on. You won't hear anything." : "Sound is back on");
-  };
+    renderMuteApp();
+    if (on && window.Pip) { try { window.Pip.stopSpeaking(); } catch {} }
+    toast(on ? "Huddle is muted. You won't hear anything." : "Sound is back on");
+  }
+  function renderMuteApp() {
+    const muteAppBtn = document.getElementById("muteAppBtn");
+    if (!muteAppBtn) return;
+    muteAppBtn.innerHTML = sound.silent ? I.speakerOff : I.speaker;
+    muteAppBtn.classList.toggle("off", sound.silent);
+    muteAppBtn.setAttribute("aria-pressed", String(sound.silent));
+    muteAppBtn.title = muteAppBtn.ariaLabel = sound.silent ? "Unmute Huddle" : "Mute Huddle";
+  }
+  if ($("muteAppBtn")) $("muteAppBtn").onclick = () => setSilent(!sound.silent);
+  renderMuteApp();
+  els.silentToggle.onchange = () => setSilent(els.silentToggle.checked);
   els.masterVol.oninput = () => {
     sound.master = Number(els.masterVol.value) / 100;
     store.set("huddle:volume", String(sound.master));

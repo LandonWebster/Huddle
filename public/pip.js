@@ -7,6 +7,32 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch {} },
   };
   const H = () => window.huddle || {};
+  // "Mute Pip": he keeps talking in his bubble, just without the voice. Only for this person.
+  const pipVoiceOn = () => ls.get("huddle:pipVoice") !== "0";
+  const SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+  const SPK_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>';
+  function voiceButton() {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pip-mute";
+    const draw = () => {
+      const on = pipVoiceOn();
+      b.innerHTML = on ? SPK : SPK_OFF;
+      b.classList.toggle("off", !on);
+      b.title = b.ariaLabel = on ? "Mute Pip's voice" : "Unmute Pip's voice";
+    };
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const on = !pipVoiceOn();
+      ls.set("huddle:pipVoice", on ? "1" : "0");
+      if (!on) stopSpeaking();
+      document.querySelectorAll(".pip-mute").forEach((x) => x._draw && x._draw());
+      if (H().toast) H().toast(on ? "Pip's voice is on" : "Pip's voice is muted. He'll still show his words.");
+    };
+    b._draw = draw;
+    draw();
+    return b;
+  }
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -39,7 +65,7 @@
   function speak(text, onEnd) {
     const vol = H().volume == null ? 1 : H().volume;
     const done = () => { if (onEnd) onEnd(); };
-    if (!vol) { setTimeout(done, Math.min(6000, 900 + text.length * 55)); return; }
+    if (!vol || !pipVoiceOn()) { setTimeout(done, Math.min(6000, 900 + text.length * 55)); return; }
     // On phones, the phone's speech voice can take over the call's audio, so during a call Pip
     // shows his words in the bubble instead of saying them out loud.
     if (H().inCall && (H().isNativeApp || H().isAndroid || H().isIOS)) { setTimeout(done, Math.min(6000, 1200 + text.length * 55)); return; }
@@ -102,7 +128,7 @@
   const helloFace = face(64);
   const helloBubble = document.createElement("div");
   helloBubble.className = "pip-bubble";
-  hello.append(helloFace, helloBubble);
+  hello.append(helloFace, helloBubble, voiceButton());
   function helloSay(text) {
     helloBubble.innerHTML = bubbleHtml(text);
     hello.classList.add("talking");
@@ -317,7 +343,7 @@
     chatEl.setAttribute("aria-label", "Talk with Pip");
     chatEl.innerHTML = `
       <div class="pc-card">
-        <header class="pc-head"><span class="pc-face"></span><div><strong>Talk with Pip</strong><small>Ask me anything, or just say hi.</small></div><button type="button" class="pc-close" aria-label="Close">✕</button></header>
+        <header class="pc-head"><span class="pc-face"></span><div><strong>Talk with Pip</strong><small>Ask me anything, or just say hi.</small></div><span class="pc-voice"></span><button type="button" class="pc-close" aria-label="Close">✕</button></header>
         <div class="pc-msgs" aria-live="polite"></div>
         <form class="pc-form">
           ${Recognition || H().isNativeApp ? '<button type="button" class="pc-mic" aria-label="Talk to Pip">🎤</button>' : ""}
@@ -326,6 +352,7 @@
         </form>
       </div>`;
     chatEl.querySelector(".pc-face").appendChild(face(40));
+    chatEl.querySelector(".pc-voice").appendChild(voiceButton());
     document.body.appendChild(chatEl);
     const msgs = chatEl.querySelector(".pc-msgs");
     const form = chatEl.querySelector(".pc-form");

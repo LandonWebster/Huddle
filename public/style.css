@@ -893,3 +893,12 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .pc-mic { border: 0; width: 42px; border-radius: 50%; background: rgba(255,255,255,.08); cursor: pointer; font-size: 17px; flex: none; }
 .pc-mic.on { background: #22d3ee; animation: pc-dot 1s infinite; }
 .pip-hello { cursor: pointer; }
+.mute-app { flex: none; align-self: flex-start; width: 36px; height: 36px; margin-left: 6px; border-radius: 50%; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: var(--text); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.mute-app svg { width: 18px; height: 18px; }
+.mute-app.off { background: rgba(248,113,113,.16); border-color: rgba(248,113,113,.5); color: #fca5a5; }
+.pip-hello { position: relative; }
+.pip-mute { width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: var(--text); display: grid; place-items: center; cursor: pointer; padding: 0; flex: none; }
+.pip-mute svg { width: 16px; height: 16px; }
+.pip-mute.off { background: rgba(248,113,113,.16); border-color: rgba(248,113,113,.5); color: #fca5a5; }
+.pip-hello > .pip-mute { position: absolute; top: 8px; right: 8px; z-index: 3; }
+.pc-voice { display: inline-flex; margin-right: 6px; }
