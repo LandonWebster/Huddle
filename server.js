@@ -10,6 +10,8 @@ const { GAMES } = require("./games");
 const PORT = process.env.PORT || 3000;
 const MAX_PER_ROOM = Number(process.env.MAX_PER_ROOM || 8);
 const PUBLIC_DIR = path.join(__dirname, "public");
+// Changes on every deploy, so open copies of the app know to reload.
+const VERSION = process.env.RENDER_GIT_COMMIT || String(Date.now());
 
 // TURN relay for people whose networks block direct connections (cell carriers, some home
 // routers, school/work wifi). Two ways to turn it on:
@@ -33,7 +35,7 @@ async function cloudflareTurn() {
     const list = Array.isArray(j.iceServers) ? j.iceServers : [j.iceServers];
     // Keep only the TURN entries (we already list STUN); credentials last a day, refresh at 12h.
     const servers = list
-      .map((s) => ({ ...s, urls: [].concat(s.urls).filter((u) => /^turns?:/.test(u)) }))
+      .map((s) => ({ ...s, urls: [].concat(s.urls).filter((u) => /^turns?:/.test(u) && !/:53(\?|$)/.test(u)) }))
       .filter((s) => s.urls.length);
     cfCache = { servers, until: Date.now() + 12 * 3600 * 1000 };
     return servers;
@@ -73,6 +75,10 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ iceServers: ice, maxPerRoom: MAX_PER_ROOM, relay: hasTurn() }));
     });
     return;
+  }
+  if (url.pathname === "/version") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    return res.end(JSON.stringify({ version: VERSION }));
   }
   if (url.pathname === "/health") {
     res.writeHead(200);

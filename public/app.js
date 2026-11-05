@@ -70,6 +70,20 @@
   const loadConfig = () => fetch("/config", { cache: "no-store" }).then((r) => r.json()).then((c) => (config = c)).catch(() => {});
   let configReady = loadConfig();
 
+  // Keep open copies up to date: the Android app can stay open for days, so when a new
+  // version is out, reload the next time you're in the lobby (never in the middle of a call).
+  let bootVersion = null;
+  async function checkVersion() {
+    try {
+      const v = (await (await fetch("/version", { cache: "no-store" })).json()).version;
+      if (!bootVersion) bootVersion = v;
+      else if (v !== bootVersion && !room) location.reload();
+    } catch {}
+  }
+  checkVersion();
+  setInterval(checkVersion, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+
   // ---------- Helpers ----------
   function toast(msg, ms = 2200) {
     els.toast.textContent = msg;
@@ -532,6 +546,8 @@
     renderPeerState(p);
     setStatus(p, "Connecting…");
     layoutGrid();
+    // After a few seconds, make it clear the badge can be tapped for details.
+    setTimeout(() => { if (peers.get(id) === p && pc.connectionState !== "connected") setStatus(p, "Connecting… tap for info"); }, 6000);
 
     pc.onicecandidate = (e) => { if (e.candidate) signal(id, { candidate: e.candidate }); };
     pc.ontrack = (e) => {
@@ -555,7 +571,7 @@
       if (!peers.has(id) || pc.connectionState === "connected" || pc.connectionState === "closed") return;
       p.tries++;
       if (p.tries === 3) sendDiag(p);
-      if (p.tries > 4) { setStatus(p, "Can't connect. Tap for details"); return; }
+      if (p.tries > 4) { setStatus(p, "Can't connect. Tap here for info"); return; }
       if (p.initiator) makeOffer(p, true);
       else signal(id, { restart: true });
     }, 9000);
@@ -563,7 +579,7 @@
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       if (s === "connected") { setStatus(p, ""); p.tries = 0; applySenderQuality(pc, profile()); }
-      else if (s === "connecting" || s === "new") setStatus(p, "Connecting…");
+      else if (s === "connecting" || s === "new") setStatus(p, "Connecting… tap for info");
       else if (s === "disconnected") setStatus(p, "Reconnecting…");
       else if (s === "failed") {
         setStatus(p, "Connection trouble…");
@@ -812,6 +828,7 @@
     history.replaceState(null, "", "/");
     refreshLocalVideo();
     window.dispatchEvent(new Event("huddle:left"));
+    setTimeout(checkVersion, 500);
   }
 
   els.micBtn.onclick = () => setMic(!local.micOn);
