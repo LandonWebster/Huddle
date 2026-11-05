@@ -11,10 +11,39 @@ const PORT = process.env.PORT || 3000;
 const MAX_PER_ROOM = Number(process.env.MAX_PER_ROOM || 8);
 const PUBLIC_DIR = path.join(__dirname, "public");
 
-// Optional TURN server for people on strict networks (cell carriers, corporate wifi).
-// Set TURN_URL, TURN_USERNAME, TURN_CREDENTIAL to enable.
-function iceServers() {
-  const servers = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
+// TURN relay for people whose networks block direct connections (cell carriers, some home
+// routers, school/work wifi). Two ways to turn it on:
+//  - Cloudflare TURN (free tier): set TURN_KEY_ID and TURN_KEY_API_TOKEN.
+//  - Any other TURN server: set TURN_URL, TURN_USERNAME, TURN_CREDENTIAL.
+const STUN = { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] };
+let cfCache = { servers: null, until: 0 };
+async function cloudflareTurn() {
+  const id = process.env.TURN_KEY_ID, token = process.env.TURN_KEY_API_TOKEN;
+  if (!id || !token) return [];
+  if (cfCache.servers && Date.now() < cfCache.until) return cfCache.servers;
+  try {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate-ice-servers`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ ttl: 86400 }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) throw new Error("status " + r.status);
+    const j = await r.json();
+    const list = Array.isArray(j.iceServers) ? j.iceServers : [j.iceServers];
+    // Keep only the TURN entries (we already list STUN); credentials last a day, refresh at 12h.
+    const servers = list
+      .map((s) => ({ ...s, urls: [].concat(s.urls).filter((u) => /^turns?:/.test(u)) }))
+      .filter((s) => s.urls.length);
+    cfCache = { servers, until: Date.now() + 12 * 3600 * 1000 };
+    return servers;
+  } catch (e) {
+    console.warn("Cloudflare TURN credentials failed:", e.message);
+    return cfCache.servers || [];
+  }
+}
+async function iceServers() {
+  const servers = [STUN, ...(await cloudflareTurn())];
   if (process.env.TURN_URL) {
     servers.push({
       urls: process.env.TURN_URL.split(","),
@@ -24,6 +53,7 @@ function iceServers() {
   }
   return servers;
 }
+const hasTurn = () => !!((process.env.TURN_KEY_ID && process.env.TURN_KEY_API_TOKEN) || process.env.TURN_URL);
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -38,8 +68,11 @@ const TYPES = {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/config") {
-    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-    return res.end(JSON.stringify({ iceServers: iceServers(), maxPerRoom: MAX_PER_ROOM }));
+    iceServers().then((ice) => {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ iceServers: ice, maxPerRoom: MAX_PER_ROOM, relay: hasTurn() }));
+    });
+    return;
   }
   if (url.pathname === "/health") {
     res.writeHead(200);
@@ -164,6 +197,10 @@ wss.on("connection", (ws) => {
       if (!me) return;
       me.state = sanitizeState(msg.state);
       broadcast(room, { type: "peer-state", id, state: me.state }, id);
+    } else if (msg.type === "diag") {
+      // Connection report from a call that couldn't connect, shown in the server log.
+      const d = msg.data || {};
+      console.log("[diag]", roomCode, JSON.stringify(d).slice(0, 600));
     } else if (msg.type === "game") {
       const me = room.get(id);
       const g = gameFor(roomCode, String(msg.game || ""));

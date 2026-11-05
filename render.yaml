@@ -16,3 +16,8 @@ services:
         sync: false
       - key: TURN_CREDENTIAL
         sync: false
+      # Cloudflare TURN relay (free tier): lets calls connect on networks that block direct links.
+      - key: TURN_KEY_ID
+        sync: false
+      - key: TURN_KEY_API_TOKEN
+        sync: false

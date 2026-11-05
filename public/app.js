@@ -67,7 +67,8 @@
   const native = (method, opts) => (isNativeApp ? Cap.nativePromise("HuddleNative", method, opts || {}) : Promise.resolve());
   if (isNativeApp) document.documentElement.classList.add("native-app");
 
-  fetch("/config").then((r) => r.json()).then((c) => (config = c)).catch(() => {});
+  const loadConfig = () => fetch("/config", { cache: "no-store" }).then((r) => r.json()).then((c) => (config = c)).catch(() => {});
+  let configReady = loadConfig();
 
   // ---------- Helpers ----------
   function toast(msg, ms = 2200) {
@@ -423,12 +424,19 @@
       audioCtx.resume();
     } catch {}
     store.set("huddle:name", myName());
+    configReady = loadConfig();
     leaving = false;
     els.startBtn.disabled = true;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen = () => ws.send(JSON.stringify({ type: "join", room: code, name: myName(), state: myState() }));
-    ws.onmessage = (ev) => onSignal(JSON.parse(ev.data));
+    // Handle messages strictly in order, so an offer never arrives before its peer exists.
+    let queue = Promise.resolve();
+    ws.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch { return; }
+      queue = queue.then(() => onSignal(m)).catch((e) => console.warn("signal", e));
+    };
     ws.onclose = () => {
       els.startBtn.disabled = false;
       if (room && !leaving) {
@@ -465,6 +473,8 @@
   async function onSignal(msg) {
     switch (msg.type) {
       case "joined":
+        // Make sure we know the relay servers before connecting to anyone.
+        await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
         myId = msg.id;
         room = msg.room;
         enterCallUI();
@@ -476,6 +486,7 @@
         window.dispatchEvent(new Event("huddle:joined"));
         break;
       case "peer-joined":
+        await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
         createPeer(msg.id, msg.name, msg.state, false);
         updateCount();
         if (!els.volumePop.hidden) renderPeerVolumes();
@@ -538,9 +549,20 @@
       }
       applyVolume(p);
     };
+    // If we still aren't connected after a while, retry with fresh network paths, then report.
+    p.tries = 0;
+    p.watchdog = setInterval(() => {
+      if (!peers.has(id) || pc.connectionState === "connected" || pc.connectionState === "closed") return;
+      p.tries++;
+      if (p.tries === 3) sendDiag(p);
+      if (p.tries > 4) { setStatus(p, "Can't connect. Tap for details"); return; }
+      if (p.initiator) makeOffer(p, true);
+      else signal(id, { restart: true });
+    }, 9000);
+    p.tile.status.onclick = (e) => { e.stopPropagation(); showDiag(p); };
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
-      if (s === "connected") { setStatus(p, ""); applySenderQuality(pc, profile()); }
+      if (s === "connected") { setStatus(p, ""); p.tries = 0; applySenderQuality(pc, profile()); }
       else if (s === "connecting" || s === "new") setStatus(p, "Connecting…");
       else if (s === "disconnected") setStatus(p, "Reconnecting…");
       else if (s === "failed") {
@@ -589,6 +611,8 @@
           signal(from, { sdp: pc.localDescription });
         }
         for (const c of p.pending.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      } else if (data.restart) {
+        if (p.initiator && pc.connectionState !== "connected") makeOffer(p, true);
       } else if (data.candidate) {
         if (pc.remoteDescription) await pc.addIceCandidate(data.candidate).catch(() => {});
         else p.pending.push(data.candidate);
@@ -596,10 +620,42 @@
     } catch (e) { console.warn("signal handling failed", e); }
   }
 
+  // What network paths did each side find? host = same wifi, srflx = through the internet,
+  // relay = through the TURN relay. Shown when you tap "Connecting…", and sent to the server log.
+  async function diag(p) {
+    const d = { ice: p.pc.iceConnectionState, conn: p.pc.connectionState, gather: p.pc.iceGatheringState,
+      signal: p.pc.signalingState, relayConfigured: !!config.relay, native: isNativeApp, ua: navigator.userAgent.slice(0, 160),
+      local: {}, remote: {}, pair: null };
+    try {
+      const stats = await p.pc.getStats();
+      const byId = new Map();
+      stats.forEach((r) => byId.set(r.id, r));
+      stats.forEach((r) => {
+        if (r.type === "local-candidate") d.local[r.candidateType + "/" + r.protocol] = (d.local[r.candidateType + "/" + r.protocol] || 0) + 1;
+        if (r.type === "remote-candidate") d.remote[r.candidateType + "/" + r.protocol] = (d.remote[r.candidateType + "/" + r.protocol] || 0) + 1;
+        if (r.type === "transport" && r.selectedCandidatePairId) {
+          const pair = byId.get(r.selectedCandidatePairId);
+          if (pair) d.pair = `${(byId.get(pair.localCandidateId) || {}).candidateType}->${(byId.get(pair.remoteCandidateId) || {}).candidateType} ${pair.state}`;
+        }
+      });
+    } catch {}
+    return d;
+  }
+  async function sendDiag(p) {
+    const d = await diag(p);
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "diag", data: d }));
+  }
+  async function showDiag(p) {
+    const d = await diag(p);
+    const list = (o) => Object.keys(o).join(", ") || "none";
+    toast(`Connection: ${d.ice}. Your paths: ${list(d.local)}. Their paths: ${list(d.remote)}. Relay: ${d.relayConfigured ? "on" : "off"}.`, 9000);
+  }
+
   function removePeer(id) {
     const p = peers.get(id);
     if (!p) return;
     try { p.pc && p.pc.close(); } catch {}
+    clearInterval(p.watchdog);
     p.tile.el.remove();
     if (p.tile.stopSpeaking) p.tile.stopSpeaking();
     if (p.gainSrc) try { p.gainSrc.disconnect(); p.gain.disconnect(); } catch {}
@@ -618,6 +674,8 @@
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
+    // Android's app view draws a big grey "play" icon on videos without a poster; hide it.
+    video.poster = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
     if (isSelf) video.muted = true;
     const avatarWrap = document.createElement("div");
     avatarWrap.className = "avatar-wrap";
@@ -868,6 +926,7 @@
     els.chatPanel.hidden = name !== "chat";
     els.gamePanel.hidden = name !== "game";
     els.call.classList.toggle("panel-open", !!name);
+    renderGameMode();
     els.chatBtn.classList.toggle("on-accent", name === "chat");
     els.gameBtn.classList.toggle("on-accent", name === "game");
     if (name === "chat") {
@@ -1297,6 +1356,16 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fullscreen) exitFullscreen(); });
 
   // ---------- Games ----------
+  // While playing an in-app game (like Butter Clicker), the cameras sit in a strip across the
+  // top third of the screen, starting at the top right, and the game fills the bottom two-thirds.
+  let playingGame = false;
+  function renderGameMode() {
+    const on = playingGame && currentPanel === "game";
+    try { if (on && fullscreen) exitFullscreen(); } catch {}
+    els.call.classList.toggle("game-mode", on);
+    requestAnimationFrame(layoutGrid);
+  }
+  window.addEventListener("huddle:playing", (e) => { playingGame = !!e.detail; renderGameMode(); });
   // Games live in public/games/ and render into #gameArea. They talk to the call through
   // window.huddle: send moves to the server, hear back the shared state for everyone.
   const gameListeners = {};

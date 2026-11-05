@@ -440,3 +440,26 @@ input[type=range] { padding: 0; border: 0; background: transparent; accent-color
 
 /* Phones: the open panel covers the bottom of the video, so tuck the video buttons away. */
 @media (max-width: 760px) { #call.panel-open:not(.fullscreen) .view-controls { display: none; } }
+
+/* ---------- Game mode: cameras across the top third, game in the bottom two-thirds ---------- */
+#call.game-mode .topbar { display: none; }
+#call.game-mode .stage { flex-direction: column; gap: 0; padding: 0; padding-top: env(safe-area-inset-top, 0px); }
+#call.game-mode .video-area { flex: 1 1 0; min-height: 0; }
+#call.game-mode .game-panel {
+  flex: 2 1 0; width: auto; height: auto; position: static; min-height: 0;
+  border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; box-shadow: none;
+  background: #0b0b0f;
+}
+#call.game-mode .view-controls, #call.game-mode .empty-state { display: none !important; }
+/* Cameras line up from the top right corner. */
+#call.game-mode .grid {
+  display: flex; flex-direction: row-reverse; justify-content: flex-start; align-items: stretch;
+  gap: 6px; padding: 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+#call.game-mode .grid::-webkit-scrollbar { display: none; }
+#call.game-mode .tile { flex: 0 0 auto; height: 100%; width: auto; aspect-ratio: 3 / 4; border-radius: 14px; }
+#call.game-mode .tile.self-hidden { display: none; }
+#call.game-mode .tile .label { font-size: 11px; padding: 2px 8px; bottom: 6px; left: 6px; }
+#call.game-mode .tile .status { top: 6px; left: 6px; font-size: 11px; }
+@media (min-width: 761px) { #call.game-mode .tile { aspect-ratio: 4 / 3; } }
+#call.game-mode .controls { padding-top: 8px; padding-bottom: calc(8px + var(--safe-b)); background: #0b0b0f; }

@@ -81,3 +81,11 @@ The Game button opens a Games area next to the call (the call keeps going while 
 
 Add a game with `HuddleGames.register({ id, title, subtitle, icon, mount(el, huddle) })` on the
 page and, for shared state, a module in `games/` listed in `games/index.js`.
+
+## Connection relay (TURN)
+
+Some networks block direct connections between devices (phone carriers, some home routers,
+school or work wifi). Calls then stay on "Connecting…". A TURN relay fixes this. Cloudflare's
+is free for normal use: create a TURN key in the Cloudflare dashboard (Realtime > TURN), then
+set `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` in the Render service's Environment. Tapping
+"Connecting…" on a tile shows which network paths each side found.

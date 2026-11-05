@@ -58,12 +58,14 @@
     title.textContent = g.title;
     back.hidden = false;
     cleanup = g.mount(area, window.huddle) || null;
+    window.dispatchEvent(new CustomEvent("huddle:playing", { detail: g.id }));
   }
 
   function stop() {
     if (cleanup) { try { cleanup(); } catch {} }
     cleanup = null;
     current = null;
+    window.dispatchEvent(new CustomEvent("huddle:playing", { detail: null }));
     render();
   }
 
