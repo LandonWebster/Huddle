@@ -8,13 +8,17 @@
   };
   const H = () => window.huddle || {};
   // "Mute Pip": he keeps talking in his bubble, just without the voice. Only for this person.
-  const pipVoiceOn = () => ls.get("huddle:pipVoice") !== "0";
+  // Pip's voice is switched off for now on every platform (Landon, 2026-11-05): he only shows his words.
+  // Set PIP_VOICE to true to bring it back (the mute buttons come back with it).
+  const PIP_VOICE = false;
+  const pipVoiceOn = () => PIP_VOICE && ls.get("huddle:pipVoice") !== "0";
   const SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
   const SPK_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>';
   function voiceButton() {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "pip-mute";
+    if (!PIP_VOICE) b.hidden = true;
     const draw = () => {
       const on = pipVoiceOn();
       b.innerHTML = on ? SPK : SPK_OFF;

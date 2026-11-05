@@ -965,3 +965,4 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .bc-badge i { grid-row: span 2; font-style: normal; font-size: 20px; }
 .bc-badge b { font-size: 12.5px; }
 .bc-badge small { font-size: 11px; color: var(--muted); }
+.pip-mute[hidden] { display: none !important; }
