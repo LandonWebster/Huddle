@@ -1405,6 +1405,9 @@
       return () => { gameListeners[game] = gameListeners[game].filter((x) => x !== cb); };
     },
     get gameOpen() { return currentPanel === "game"; },
+    joinRoom: (code) => joinRoom(code),
+    newRoomCode: () => randomCode(),
+    setName(n) { if (!els.nameInput.value.trim()) { els.nameInput.value = n; store.set("huddle:name", n); } },
   };
   window.dispatchEvent(new Event("huddle:ready"));
 

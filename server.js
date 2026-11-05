@@ -6,6 +6,8 @@ const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const { GAMES } = require("./games");
+const store = require("./store");
+const api = require("./api");
 
 const PORT = process.env.PORT || 3000;
 const MAX_PER_ROOM = Number(process.env.MAX_PER_ROOM || 8);
@@ -76,6 +78,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (url.pathname.startsWith("/api/")) return api.handle(req, res, url);
   if (url.pathname === "/version") {
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     return res.end(JSON.stringify({ version: VERSION }));
@@ -154,6 +157,14 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // The chats screen signs this connection in so new messages show up live.
+    if (msg.type === "auth") {
+      store.userForToken(msg.token).then((u) => {
+        if (u) { api.attach(ws, u); send(ws, { type: "auth-ok" }); }
+        else send(ws, { type: "auth-failed" });
+      }).catch(() => {});
+      return;
+    }
     if (msg.type === "join" && !roomCode) {
       const code = cleanCode(msg.room);
       if (!code) return send(ws, { type: "error", reason: "bad_room" });
@@ -272,4 +283,9 @@ setInterval(() => {
   }
 }, 15000);
 
-server.listen(PORT, () => console.log(`Call app running on http://localhost:${PORT}`));
+store.init().then(() => {
+  server.listen(PORT, () => console.log(`Call app running on http://localhost:${PORT}`));
+}).catch((e) => {
+  console.error("Couldn't open the database:", e);
+  process.exit(1);
+});

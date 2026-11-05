@@ -89,3 +89,11 @@ school or work wifi). Calls then stay on "Connecting…". A TURN relay fixes thi
 is free for normal use: create a TURN key in the Cloudflare dashboard (Realtime > TURN), then
 set `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` in the Render service's Environment. Tapping
 "Connecting…" on a tile shows which network paths each side found.
+
+## Chats & friends
+
+Accounts (name + password), a friends list (add by name), and saved one-to-one chats with
+photos, voice notes, hold-to-pin, and a Pinned list in the ☰ menu that jumps back to each
+message. Live while the app is open; no notifications. Data lives in Postgres: set
+`DATABASE_URL` (a free Neon database works). Without it, chats are kept in memory and lost on
+restart. Code: `api.js`, `store.js`, `public/chats.js`.

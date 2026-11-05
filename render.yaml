@@ -21,3 +21,6 @@ services:
         sync: false
       - key: TURN_KEY_API_TOKEN
         sync: false
+      # Postgres database for accounts and saved chats (e.g. a free Neon database).
+      - key: DATABASE_URL
+        sync: false
