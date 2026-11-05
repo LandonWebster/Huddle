@@ -753,7 +753,7 @@
     try {
       await api(`/chats/${c.id}/messages`, { body: { kind: "text", body: `📹 Join my video call: ${location.origin}/r/${code}` } });
       const r = await api(`/chats/${c.id}/invite`, { body: { room: code } });
-      toast(r.online ? `Asked ${c.friend.display.split(/\s+/)[0]} to join` : `${c.friend.display.split(/\s+/)[0]} isn't on Huddle right now. They'll see the link in your chat.`, 3500);
+      toast(r.online ? `Asked ${c.friend.display} to join` : `${c.friend.display} isn't on Huddle right now. They'll see the link in your chat.`, 3500);
     } catch (ex) { toast(ex.message); }
   }
   // An in-app card only (no sound, no notification): it shows while Huddle is open.

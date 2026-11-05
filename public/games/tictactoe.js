@@ -43,7 +43,7 @@
   const PIP_O = '<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="5"/></svg>';
 
   function mount(el, h) {
-    const me = ((h && h.name) || "You").split(/\s+/)[0] || "You";
+    const me = ((h && h.name) || "You") || "You";
     el.innerHTML = `
       <div class="ttt">
         <div class="ttt-vs">

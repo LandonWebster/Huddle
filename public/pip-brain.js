@@ -84,7 +84,7 @@
   let lastRiddle = null;
   let lastOffer = null; // what Pip just offered, so "yes" / "sure" can follow it
 
-  const first = (n) => String(n || "").split(/\s+/)[0];
+  const first = (n) => String(n || "").trim(); // full names: people pick the name they want to be called
 
   function gameIdea(ctx) {
     const n = (ctx.peers || []).length;

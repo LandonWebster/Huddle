@@ -110,7 +110,7 @@
   }
   function myName() {
     const n = ($("nameInput").value || "").trim();
-    return n && n !== "Guest" ? n.split(/\s+/)[0] : "";
+    return n && n !== "Guest" ? n : "";
   }
   // Every time the app opens: "Welcome back," then your name.
   function greet() {
@@ -269,6 +269,9 @@
     const me = myName();
     const others = d.peers || [];
     lastSaid = Date.now();
+    clearInterval(idleTimer);
+    idleTimer = setInterval(idleCheck, 60 * 1000);
+    if (d.rejoined) return; // back after a dropped connection: no second hello
     if (!others.length) say(me ? `Hi ${me}. I'll keep you company until your friends get here.` : "Hi. I'll keep you company until your friends get here.");
     else if (others.length === 1) say(`Hey${me ? " " + me : ""}. ${others[0]} is here. It's nice to see you both.`);
     else say("Hey everyone. It's nice to see you all.");
@@ -278,8 +281,8 @@
   window.addEventListener("huddle:left", () => { clearInterval(idleTimer); stopSpeaking(); queue = []; talking = false; dock.classList.remove("talking", "open"); });
   window.addEventListener("huddle:peer", (e) => {
     const d = e.detail;
-    if (d.joined) say(`Hi ${d.name.split(/\s+/)[0]}, glad you're here.`);
-    else say(`Bye ${d.name.split(/\s+/)[0]}. See you soon.`);
+    if (d.joined) say(`Hi ${d.name}, glad you're here.`);
+    else say(`Bye ${d.name}. See you soon.`);
   });
   window.addEventListener("huddle:settings", (e) => {
     const d = e.detail;

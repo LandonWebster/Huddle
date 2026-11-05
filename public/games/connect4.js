@@ -66,7 +66,7 @@
   }
 
   function mount(el, h) {
-    const me = ((h && h.name) || "You").split(/\s+/)[0] || "You";
+    const me = ((h && h.name) || "You") || "You";
     el.innerHTML = `
       <div class="ttt c4">
         <div class="ttt-vs">

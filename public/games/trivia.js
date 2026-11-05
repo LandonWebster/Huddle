@@ -11,7 +11,7 @@
     const sub = el.querySelector(".tv-sub");
     const timer = el.querySelector(".tv-timer");
     let state = null, lastKey = "", myChoice = null;
-    const first = (n) => String(n || "").split(/\s+/)[0];
+    const first = (n) => String(n || "").trim(); // full names: people pick the name they want to be called
     const say = (t) => { if (window.Pip && window.Pip.on) window.Pip.say(t, { replace: true }); };
     const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 

@@ -73,11 +73,12 @@
   // Keep open copies up to date: the Android app can stay open for days, so when a new
   // version is out, reload the next time you're in the lobby (never in the middle of a call).
   let bootVersion = null;
+  let reconnect = null; // { code, tries } while getting back into a call after the connection dropped
   async function checkVersion() {
     try {
       const v = (await (await fetch("/version", { cache: "no-store" })).json()).version;
       if (!bootVersion) bootVersion = v;
-      else if (v !== bootVersion && !room) location.reload();
+      else if (v !== bootVersion && !room && !reconnect) location.reload();
     } catch {}
   }
   checkVersion();
@@ -125,6 +126,7 @@
     if (!p || !p.pc) return;
     const vol = effectiveVolume(p.id);
     const v = p.tile.video;
+    if (!p.gain && !elementVolumeWorks && vol > 0 && vol < 1) routeThroughGain(p);
     if (p.gain) {
       v.muted = true;
       p.gain.gain.value = vol;
@@ -141,8 +143,24 @@
     els.masterVol.value = String(Math.round(sound.master * 100));
     els.masterVolOut.textContent = `${Math.round(sound.master * 100)}%`;
   }
+  let soundTapShown = false;
+  function needSoundTap() {
+    if (soundTapShown) return;
+    soundTapShown = true;
+    toast("Tap anywhere to turn on sound", 6000);
+    const on = () => {
+      soundTapShown = false;
+      try { if (audioCtx) audioCtx.resume(); } catch {}
+      for (const q of peers.values()) { if (q.pc) { applyVolume(q); q.tile.video.play().catch(() => {}); } }
+    };
+    document.addEventListener("pointerdown", on, { once: true, capture: true });
+  }
+  // Only used for in-between volumes on iPhone: Safari can go silent when call audio goes
+  // through Web Audio, so at full volume (the usual case) the video element plays the sound.
   function routeThroughGain(p) {
     if (elementVolumeWorks || p.gain || !audioCtx) return;
+    const vol = effectiveVolume(p.id);
+    if (vol === 0 || vol === 1) return;
     try {
       const src = audioCtx.createMediaStreamSource(p.stream);
       const gain = audioCtx.createGain();
@@ -453,6 +471,7 @@
 
   // ---------- Signaling ----------
   function joinRoom(code) {
+    if (reconnect && reconnect.code !== code) reconnect = null; // they started something else
     els.lobbyError.textContent = "";
     // Start audio during the tap; phones only allow audio that starts from a tap.
     try {
@@ -487,9 +506,15 @@
           rejoinCode = room;
           leaveRoom();
         } else {
-          toast("Lost connection to the call");
-          leaveRoom();
+          // Dropped (bad signal, or the server restarted for an update): get back in on our own.
+          const code = room;
+          leaveRoom(true);
+          reconnect = { code, tries: 0 };
+          toast("Reconnecting…", 4000);
+          setTimeout(tryReconnect, 800);
         }
+      } else if (!room && reconnect && !leaving) {
+        scheduleReconnect();
       }
     };
     ws.onerror = () => {
@@ -497,6 +522,23 @@
         ? "You're offline. Connect to the internet to join a call."
         : "Couldn't reach the call server";
     };
+  }
+
+  function tryReconnect() {
+    if (!reconnect || room) return;
+    reconnect.tries++;
+    joinRoom(reconnect.code);
+  }
+  function scheduleReconnect() {
+    if (!reconnect) return;
+    if (reconnect.tries >= 8) {
+      reconnect = null;
+      stopMedia();
+      native("endCall").catch(() => {});
+      toast("Lost connection to the call", 4000);
+      return;
+    }
+    setTimeout(tryReconnect, Math.min(10000, 1000 * 2 ** reconnect.tries));
   }
 
   const myState = () => ({ mic: local.micOn, cam: local.camOn });
@@ -509,7 +551,9 @@
 
   async function onSignal(msg) {
     switch (msg.type) {
-      case "joined":
+      case "joined": {
+        const rejoined = !!reconnect;
+        reconnect = null;
         // Make sure we know the relay servers before connecting to anyone.
         await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
         await startMedia(); // camera and mic are ready before anyone is called
@@ -521,8 +565,10 @@
         for (const p of msg.peers) createPeer(p.id, p.name, p.state, true);
         updateCount();
         for (const m of msg.chat || []) addChat(m, false);
-        window.dispatchEvent(new CustomEvent("huddle:joined", { detail: { settings: msg.settings || {}, peers: msg.peers.map((p) => p.name) } }));
+        if (rejoined) toast("Back in the call");
+        window.dispatchEvent(new CustomEvent("huddle:joined", { detail: { settings: msg.settings || {}, peers: msg.peers.map((p) => p.name), rejoined } }));
         break;
+      }
       case "peer-joined":
         await Promise.race([configReady, new Promise((r) => setTimeout(r, 3000))]);
         await startMedia();
@@ -591,12 +637,18 @@
       e.track.onmute = () => { p.silentTracks[kind] = true; renderPeerState(p); };
       e.track.onunmute = () => { p.silentTracks[kind] = false; renderPeerState(p); };
       p.tile.video.srcObject = p.stream;
-      p.tile.video.play().catch(() => {});
+      applyVolume(p);
+      p.tile.video.play().catch(() => {
+        // The browser wouldn't play sound on its own: play muted so video shows, and ask for a tap.
+        p.tile.video.muted = true;
+        p.tile.video.play().catch(() => {});
+        needSoundTap();
+      });
       if (e.track.kind === "audio") {
         routeThroughGain(p);
-        watchSpeaking(p.stream, p.tile.el);
+        // On iPhone, reading call audio with Web Audio can silence it, so skip the talking glow there.
+        if (!isIOS) watchSpeaking(p.stream, p.tile.el);
       }
-      applyVolume(p);
     };
     // If we still aren't connected after a while, retry with fresh network paths, then report.
     p.tries = 0;
