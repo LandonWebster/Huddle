@@ -68,5 +68,16 @@ service; Huddle never asks for notification permission). GitHub Actions
 (`.github/workflows/android.yml`) builds it on every change under `native/` and publishes
 `huddle.apk` to Releases: https://github.com/LandonWebster/Huddle/releases/latest/download/huddle.apk
 
-Release signing: the key is committed encrypted (`native/android/app/huddle-release.keystore.enc`);
-the `HUDDLE_KEY_PASS` repository secret unlocks it. Without the secret CI makes a test-signed APK.
+Release signing: the first build after the `HUDDLE_KEY_PASS` repository secret is added creates the
+permanent key and commits it encrypted (`native/android/app/huddle-release.keystore.enc`). Without the secret CI makes a test-signed APK.
+
+## Games
+
+The Game button opens a Games area next to the call (the call keeps going while you play).
+- **Butter Clicker** (`public/games/butter.js`, server rules in `games/butter.js`): co-op clicker.
+  Everyone taps one shared tub of butter; upgrades are bought from the shared pool; each extra
+  player adds a 10% team bonus. The server keeps the score so late joiners catch up.
+- **Roblox**: opens the Roblox app (Play Store / App Store if it isn't installed).
+
+Add a game with `HuddleGames.register({ id, title, subtitle, icon, mount(el, huddle) })` on the
+page and, for shared state, a module in `games/` listed in `games/index.js`.

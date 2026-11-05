@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
+const { GAMES } = require("./games");
 
 const PORT = process.env.PORT || 3000;
 const MAX_PER_ROOM = Number(process.env.MAX_PER_ROOM || 8);
@@ -71,6 +72,16 @@ const rooms = new Map();
 // recent chat per room, so people who join late see the conversation
 const chats = new Map();
 const CHAT_HISTORY = 50;
+// shared game state per room: code -> { [gameId]: { state, dirty } }
+const roomGames = new Map();
+function gameFor(code, gameId) {
+  const game = GAMES[gameId];
+  if (!game) return null;
+  const all = roomGames.get(code) || {};
+  roomGames.set(code, all);
+  if (!all[gameId]) all[gameId] = { state: game.create(), dirty: true };
+  return all[gameId];
+}
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 64 * 1024 });
 
 function send(ws, msg) {
@@ -153,6 +164,12 @@ wss.on("connection", (ws) => {
       if (!me) return;
       me.state = sanitizeState(msg.state);
       broadcast(room, { type: "peer-state", id, state: me.state }, id);
+    } else if (msg.type === "game") {
+      const me = room.get(id);
+      const g = gameFor(roomCode, String(msg.game || ""));
+      if (!me || !g) return;
+      if (msg.action === "sync") { g.dirty = true; return; }
+      if (GAMES[msg.game].action(g.state, { id, name: me.name }, msg, room.size)) g.dirty = true;
     }
   });
 
@@ -165,6 +182,7 @@ wss.on("connection", (ws) => {
     if (room.size === 0) {
       rooms.delete(roomCode);
       chats.delete(roomCode); // chat disappears once everyone has left
+      roomGames.delete(roomCode); // and so do the games
     }
   });
 });
@@ -173,6 +191,31 @@ function sanitizeState(s) {
   s = s || {};
   return { mic: !!s.mic, cam: !!s.cam };
 }
+
+// Send game updates to everyone in the room, at most 5 times a second.
+function flushGames() {
+  for (const [code, all] of roomGames) {
+    const room = rooms.get(code);
+    if (!room) { roomGames.delete(code); continue; }
+    for (const [gameId, g] of Object.entries(all)) {
+      if (!g.dirty) continue;
+      g.dirty = false;
+      broadcast(room, { type: "game-state", game: gameId, state: GAMES[gameId].view(g.state, room.size, room) });
+    }
+  }
+}
+setInterval(flushGames, 200);
+// Once a second, games that make progress on their own (like butter churns) move forward.
+setInterval(() => {
+  for (const [code, all] of roomGames) {
+    const room = rooms.get(code);
+    if (!room) continue;
+    for (const [gameId, g] of Object.entries(all)) {
+      const game = GAMES[gameId];
+      if (game.tick && game.tick(g.state, room.size)) g.dirty = true;
+    }
+  }
+}, 1000);
 
 // Drop dead connections (phones that lost signal) so they leave the call.
 setInterval(() => {

@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
 
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
@@ -124,5 +125,37 @@ public class HuddleNativePlugin extends Plugin {
             send(CallService.ACTION_STOP_SHARE, null);
         } catch (Exception ignored) {}
         call.resolve();
+    }
+
+    /** Opens another installed app (e.g. Roblox), or its Play Store page if it isn't installed. */
+    @PluginMethod
+    public void openApp(PluginCall call) {
+        String pkg = call.getString("package", "");
+        if (pkg == null || !pkg.matches("[A-Za-z0-9_.]+")) {
+            call.reject("bad package");
+            return;
+        }
+        Context ctx = getContext();
+        try {
+            Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(pkg);
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(launch);
+                call.resolve(new JSObject().put("opened", "app"));
+                return;
+            }
+            Intent store = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg));
+            store.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                ctx.startActivity(store);
+            } catch (Exception e) {
+                Intent web = new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + pkg));
+                web.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(web);
+            }
+            call.resolve(new JSObject().put("opened", "store"));
+        } catch (Exception e) {
+            call.reject("Couldn't open the app", e);
+        }
     }
 }

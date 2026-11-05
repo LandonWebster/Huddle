@@ -473,6 +473,7 @@
         for (const p of msg.peers) createPeer(p.id, p.name, p.state, true);
         updateCount();
         for (const m of msg.chat || []) addChat(m, false);
+        window.dispatchEvent(new Event("huddle:joined"));
         break;
       case "peer-joined":
         createPeer(msg.id, msg.name, msg.state, false);
@@ -485,6 +486,9 @@
         if (p) { toast(`${p.name} left`); removePeer(msg.id); }
         break;
       }
+      case "game-state":
+        for (const cb of gameListeners[msg.game] || []) { try { cb(msg.state); } catch (e) { console.error(e); } }
+        break;
       case "peer-state": {
         const p = peers.get(msg.id);
         if (p) { p.state = msg.state; renderPeerState(p); }
@@ -749,6 +753,7 @@
     els.startBtn.disabled = false;
     history.replaceState(null, "", "/");
     refreshLocalVideo();
+    window.dispatchEvent(new Event("huddle:left"));
   }
 
   els.micBtn.onclick = () => setMic(!local.micOn);
@@ -862,6 +867,7 @@
     currentPanel = name;
     els.chatPanel.hidden = name !== "chat";
     els.gamePanel.hidden = name !== "game";
+    els.call.classList.toggle("panel-open", !!name);
     els.chatBtn.classList.toggle("on-accent", name === "chat");
     els.gameBtn.classList.toggle("on-accent", name === "game");
     if (name === "chat") {
@@ -872,6 +878,7 @@
       els.chatInput.blur();
     }
     requestAnimationFrame(layoutGrid);
+    window.dispatchEvent(new CustomEvent("huddle:panel", { detail: name }));
   }
   els.gameBtn.onclick = () => openPanel(currentPanel === "game" ? null : "game");
   els.closeGame.onclick = () => openPanel(null);
@@ -1289,8 +1296,31 @@
   window.addEventListener("popstate", () => { if (fullscreen) exitFullscreen(true); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fullscreen) exitFullscreen(); });
 
-  // Hook for the future game layer: #gameArea is the mount point.
-  window.huddle = { gameArea: $("gameArea"), peers, get room() { return room; } };
+  // ---------- Games ----------
+  // Games live in public/games/ and render into #gameArea. They talk to the call through
+  // window.huddle: send moves to the server, hear back the shared state for everyone.
+  const gameListeners = {};
+  window.huddle = {
+    gameArea: $("gameArea"),
+    peers,
+    get room() { return room; },
+    get myId() { return myId; },
+    get name() { return myName(); },
+    isNativeApp,
+    isAndroid,
+    isIOS,
+    native,
+    toast,
+    sendGame(game, payload) {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "game", game, ...payload }));
+    },
+    onGame(game, cb) {
+      (gameListeners[game] = gameListeners[game] || []).push(cb);
+      return () => { gameListeners[game] = gameListeners[game].filter((x) => x !== cb); };
+    },
+    get gameOpen() { return currentPanel === "game"; },
+  };
+  window.dispatchEvent(new Event("huddle:ready"));
 
   initPreview();
 })();

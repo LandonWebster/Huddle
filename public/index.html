@@ -128,19 +128,14 @@
         </form>
       </aside>
 
-      <!-- Space reserved for the game. Games will render into #gameArea. -->
+      <!-- Games render into #gameArea (see public/games/). -->
       <aside id="gamePanel" class="side-panel game-panel" hidden>
         <div class="panel-head">
-          <strong>Game</strong>
-          <button class="icon-btn" id="closeGame" aria-label="Close game panel">✕</button>
+          <button class="icon-btn back-btn" id="gameBack" type="button" aria-label="Back to games" hidden>‹ Games</button>
+          <strong id="gameTitle">Games</strong>
+          <button class="icon-btn" id="closeGame" type="button" aria-label="Close games">✕</button>
         </div>
-        <div id="gameArea" class="game-area">
-          <div class="game-placeholder">
-            <div class="dice">🎲</div>
-            <p>Games will show up here.</p>
-            <small>Everyone in the call will play together.</small>
-          </div>
-        </div>
+        <div id="gameArea" class="game-area"></div>
       </aside>
     </div>
 
@@ -194,5 +189,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="/app.js"></script>
+  <script src="/games/hub.js"></script>
+  <script src="/games/butter.js"></script>
 </body>
 </html>

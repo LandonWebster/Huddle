@@ -40,6 +40,15 @@
         </provider>
     </application>
 
+    <!-- Apps Huddle can open from the Games area (Android 11+ needs these listed). -->
+    <queries>
+        <package android:name="com.roblox.client" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="market" />
+        </intent>
+    </queries>
+
     <!-- Permissions -->
     <!-- No POST_NOTIFICATIONS on purpose: Huddle never asks to show notifications. -->
 

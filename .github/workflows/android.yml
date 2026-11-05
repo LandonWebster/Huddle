@@ -56,10 +56,23 @@ jobs:
             echo "::warning::HUDDLE_KEY_PASS secret is not set; building a test-signed APK instead."
             exit 0
           fi
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-            -in native/android/app/huddle-release.keystore.enc \
-            -out "$RUNNER_TEMP/huddle.keystore" -pass env:HUDDLE_KEY_PASS
-          echo "HUDDLE_KEYSTORE=$RUNNER_TEMP/huddle.keystore" >> "$GITHUB_ENV"
+          ENC=native/android/app/huddle-release.keystore.enc
+          KS="$RUNNER_TEMP/huddle.keystore"
+          if [ ! -f "$ENC" ]; then
+            # First signed build: make the permanent key, lock it with the secret, and save it
+            # (encrypted) in the repo so every later build signs with the same key.
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias huddle -keyalg RSA -keysize 4096 \
+              -validity 10000 -storepass "$HUDDLE_KEY_PASS" -keypass "$HUDDLE_KEY_PASS" -dname "CN=Huddle, O=Landon Webster"
+            openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in "$KS" -out "$ENC" -pass env:HUDDLE_KEY_PASS
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$ENC"
+            git commit -m "Save encrypted Android release key [skip ci]"
+            git push
+          else
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in "$ENC" -out "$KS" -pass env:HUDDLE_KEY_PASS
+          fi
+          echo "HUDDLE_KEYSTORE=$KS" >> "$GITHUB_ENV"
 
       - name: Build APK
         working-directory: native/android
