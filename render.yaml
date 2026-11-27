@@ -35,3 +35,15 @@ services:
       # Optional: pay-as-you-go phone calls for everyone but the owner (Stripe secret key).
       - key: STRIPE_SECRET_KEY
         sync: false
+      # Where posted videos and photos are kept (Cloudflare R2 or any S3-compatible storage).
+      # Without these, photos go in the database and videos can't be posted.
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_KEY_ID
+        sync: false
+      - key: STORAGE_SECRET
+        sync: false
+      - key: STORAGE_PUBLIC_URL
+        sync: false

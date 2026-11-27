@@ -2,7 +2,7 @@
 // Calls themselves always need the internet; only the app's own files are cached.
 const CACHE = "huddle-v33";
 const SHELL = [
-  "/", "/style.css", "/app.js", "/games/hub.js", "/games/butter.js", "/chats.js", "/phone.js", "/phone-inbox.js", "/notifications.js", "/pip-brain.js", "/pip.js", "/games/tictactoe.js", "/games/connect4.js", "/games/trivia.js", "/tabs.js", "/home.js", "/alarms.js", "/manifest.webmanifest", "/icon.svg",
+  "/", "/style.css", "/app.js", "/games/hub.js", "/games/butter.js", "/chats.js", "/phone.js", "/phone-inbox.js", "/notifications.js", "/pip-brain.js", "/pip.js", "/games/tictactoe.js", "/games/connect4.js", "/games/trivia.js", "/tabs.js", "/home.js", "/alarms.js", "/feeds.js", "/manifest.webmanifest", "/icon.svg",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
 ];
 
@@ -23,6 +23,8 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== location.origin) return;
   if (["/ws", "/config", "/health"].includes(url.pathname)) return; // always live
+  // Posted videos and photos stream straight from the server (videos load in pieces).
+  if (url.pathname.startsWith("/api/post-media/") || req.headers.has("range")) return;
 
   if (req.mode === "navigate") {
     // Pages (including invite links like /r/ABC123): use the network, fall back to the cached app.

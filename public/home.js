@@ -84,6 +84,7 @@
   p.onShow = () => {
     renderTiles();
     loadFriends();
+    if (window.HuddleFeeds) window.HuddleFeeds.home();
     clearInterval(timer);
     timer = setInterval(() => { if (!p.el.hidden) { renderTiles(); loadFriends(); } }, 30000);
   };

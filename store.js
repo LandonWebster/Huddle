@@ -159,7 +159,44 @@ CREATE TABLE IF NOT EXISTS push_subs (
   user_id TEXT NOT NULL,
   data TEXT NOT NULL,
   created_at BIGINT NOT NULL
-)
+);
+CREATE TABLE IF NOT EXISTS posts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  caption TEXT,
+  src TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  thumb TEXT,
+  w INTEGER,
+  h INTEGER,
+  duration REAL,
+  created_at BIGINT NOT NULL,
+  hidden_at BIGINT,
+  removed_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS posts_kind_time ON posts (kind, created_at);
+CREATE TABLE IF NOT EXISTS post_likes (
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS post_saves (
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS post_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  removed_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS post_comments_post ON post_comments (post_id, created_at)
 `;
 
 let pool = null;
@@ -695,6 +732,136 @@ async function deletePushSub(endpoint, userId) {
   else await q("DELETE FROM push_subs WHERE endpoint = $1", [endpoint]);
 }
 
+// ---------- Posts: the Video and Photos feeds ----------
+// src is where the file lives: "db:<media id>" (in the database) or "s3:<key>" (in storage).
+const HIDE_AFTER_REPORTS = 3; // a post reported by this many different people is hidden for review
+const inList = (arr, start = 1) => arr.map((_, i) => "$" + (i + start)).join(", ");
+async function createPost(me, { kind, caption, src, mime, thumb, w, h, duration }) {
+  const row = { id: id(12), user_id: me.id, kind, caption: String(caption || "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " ").trim().slice(0, 300) || null,
+    src, mime, thumb: thumb || null, w: Number.isFinite(w) ? Math.round(w) : null, h: Number.isFinite(h) ? Math.round(h) : null,
+    duration: Number.isFinite(duration) ? duration : null, created_at: now() };
+  await q("INSERT INTO posts (id, user_id, kind, caption, src, mime, thumb, w, h, duration, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+    [row.id, row.user_id, row.kind, row.caption, row.src, row.mime, row.thumb, row.w, row.h, row.duration, row.created_at]);
+  return row;
+}
+async function postsToday(userId) {
+  const r = await one("SELECT COUNT(*) AS k FROM posts WHERE user_id = $1 AND created_at > $2", [userId, now() - 24 * 3600 * 1000]);
+  return Number(r ? r.k : 0);
+}
+async function postRow(postId) {
+  return one("SELECT * FROM posts WHERE id = $1 AND removed_at IS NULL", [String(postId)]);
+}
+// A post as the app sees it.
+async function postsOut(me, rows) {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const L = inList(ids);
+  const likes = new Map((await q(`SELECT post_id, COUNT(*) AS k FROM post_likes WHERE post_id IN (${L}) GROUP BY post_id`, ids)).map((r) => [r.post_id, Number(r.k)]));
+  const comments = new Map((await q(`SELECT post_id, COUNT(*) AS k FROM post_comments WHERE removed_at IS NULL AND post_id IN (${L}) GROUP BY post_id`, ids)).map((r) => [r.post_id, Number(r.k)]));
+  const mine = (await q(`SELECT post_id FROM post_likes WHERE user_id = $1 AND post_id IN (${inList(ids, 2)})`, [me.id, ...ids])).map((r) => r.post_id);
+  const saved = (await q(`SELECT post_id FROM post_saves WHERE user_id = $1 AND post_id IN (${inList(ids, 2)})`, [me.id, ...ids])).map((r) => r.post_id);
+  const uids = [...new Set(rows.map((r) => r.user_id))];
+  const users = new Map((await q(`SELECT * FROM users WHERE id IN (${inList(uids)})`, uids)).map((u) => [u.id, publicUser(u)]));
+  return rows.map((r) => ({
+    id: r.id, kind: r.kind, caption: r.caption || "", mime: r.mime, w: r.w, h: r.h, duration: r.duration,
+    at: Number(r.created_at), user: users.get(r.user_id) || null, mine: r.user_id === me.id,
+    hidden: !!r.hidden_at, hasThumb: !!r.thumb,
+    likes: likes.get(r.id) || 0, liked: mine.includes(r.id), saved: saved.includes(r.id), comments: comments.get(r.id) || 0,
+  }));
+}
+// feed: "all" | "friends" | "saved" | "mine" | a user id
+async function listPosts(me, { kind, feed = "all", before, limit = 20 }) {
+  limit = Math.min(40, Math.max(1, Number(limit) || 20));
+  const t = Number(before) || now() + 1;
+  const hide = await blockSet(me.id);
+  let rows;
+  if (feed === "saved") {
+    rows = await q("SELECT p.* FROM post_saves s JOIN posts p ON p.id = s.post_id WHERE s.user_id = $1 AND p.kind = $2 AND p.removed_at IS NULL AND p.created_at < $3 ORDER BY p.created_at DESC LIMIT $4", [me.id, kind, t, limit * 2]);
+  } else {
+    let who = null;
+    if (feed === "friends") who = [me.id, ...(await q("SELECT friend_id FROM friends WHERE user_id = $1", [me.id])).map((r) => r.friend_id)];
+    else if (feed === "mine") who = [me.id];
+    else if (feed && feed !== "all") who = [String(feed)];
+    rows = who
+      ? await q(`SELECT * FROM posts WHERE kind = $1 AND removed_at IS NULL AND created_at < $2 AND user_id IN (${inList(who, 4)}) ORDER BY created_at DESC LIMIT $3`, [kind, t, limit * 2, ...who])
+      : await q("SELECT * FROM posts WHERE kind = $1 AND removed_at IS NULL AND created_at < $2 ORDER BY created_at DESC LIMIT $3", [kind, t, limit * 2]);
+  }
+  const keep = rows.filter((r) => !hide.has(r.user_id) && (!r.hidden_at || r.user_id === me.id)).slice(0, limit);
+  // Where the next page starts (null when there's nothing more).
+  let next = null;
+  if (keep.length === limit) next = Number(keep[keep.length - 1].created_at);
+  else if (rows.length === limit * 2) next = Number(rows[rows.length - 1].created_at);
+  return { posts: await postsOut(me, keep), next };
+}
+async function visiblePost(me, postId) {
+  const p = await postRow(postId);
+  if (!p) return null;
+  if (p.hidden_at && p.user_id !== me.id) return null;
+  if (await blockedEither(me.id, p.user_id)) return null;
+  return p;
+}
+async function setPostMark(table, me, postId, on) {
+  if (on) {
+    if (!(await one(`SELECT 1 AS x FROM ${table} WHERE post_id = $1 AND user_id = $2`, [postId, me.id]))) await q(`INSERT INTO ${table} (post_id, user_id, created_at) VALUES ($1, $2, $3)`, [postId, me.id, now()]);
+  } else await q(`DELETE FROM ${table} WHERE post_id = $1 AND user_id = $2`, [postId, me.id]);
+}
+const likePost = (me, postId, on) => setPostMark("post_likes", me, postId, on);
+const savePost = (me, postId, on) => setPostMark("post_saves", me, postId, on);
+async function postComments(me, postId) {
+  const hide = await blockSet(me.id);
+  const rows = await q("SELECT c.*, u.display, u.photo, u.color, u.username, u.bio FROM post_comments c JOIN users u ON u.id = c.user_id WHERE c.post_id = $1 AND c.removed_at IS NULL ORDER BY c.created_at ASC LIMIT 300", [postId]);
+  return rows.filter((r) => !hide.has(r.user_id)).map((r) => ({
+    id: r.id, body: r.body, at: Number(r.created_at), mine: r.user_id === me.id,
+    user: publicUser({ id: r.user_id, username: r.username, display: r.display, photo: r.photo, bio: r.bio, color: r.color }),
+  }));
+}
+async function addComment(me, postId, body) {
+  const text = String(body || "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " ").trim().slice(0, 300);
+  if (!text) return { error: "Write something first" };
+  const c = { id: id(), post_id: postId, user_id: me.id, body: text, created_at: now() };
+  await q("INSERT INTO post_comments (id, post_id, user_id, body, created_at) VALUES ($1, $2, $3, $4, $5)", [c.id, c.post_id, c.user_id, c.body, c.created_at]);
+  return { comment: { id: c.id, body: c.body, at: c.created_at, mine: true, user: publicUser(me) } };
+}
+// Your own comment, or any comment on your own post.
+async function removeComment(me, commentId) {
+  const c = await one("SELECT c.*, p.user_id AS owner FROM post_comments c JOIN posts p ON p.id = c.post_id WHERE c.id = $1", [String(commentId)]);
+  if (!c || (c.user_id !== me.id && c.owner !== me.id)) return false;
+  await q("UPDATE post_comments SET removed_at = $1 WHERE id = $2", [now(), c.id]);
+  return true;
+}
+async function removePost(me, postId) {
+  const p = await postRow(postId);
+  if (!p || p.user_id !== me.id) return null;
+  await q("UPDATE posts SET removed_at = $1 WHERE id = $2", [now(), p.id]);
+  return p;
+}
+// Reports a post (or a comment on it). Saved like other reports, with a copy of what was posted.
+async function reportPost(me, postId, { reason, note, commentId }) {
+  const p = await postRow(postId);
+  if (!p) return { error: "That post is gone" };
+  let target = p.user_id, snapshot = { post: p.id, kind: p.kind, caption: p.caption, src: p.src };
+  if (commentId) {
+    const c = await one("SELECT * FROM post_comments WHERE id = $1 AND post_id = $2", [String(commentId), p.id]);
+    if (!c) return { error: "That comment is gone" };
+    target = c.user_id; snapshot = { post: p.id, comment: c.id, body: c.body };
+  }
+  if (target === me.id) return { error: "Can't report that" };
+  const why = REPORT_REASONS.includes(reason) ? reason : "other";
+  const ref = commentId ? "comment:" + commentId : "post:" + p.id;
+  if (!(await one("SELECT 1 AS x FROM reports WHERE reporter = $1 AND message_id = $2", [me.id, ref]))) {
+    await q("INSERT INTO reports (id, reporter, target, reason, note, chat_id, message_id, snapshot, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+      [id(), me.id, target, why, String(note || "").slice(0, 500) || null, null, ref, JSON.stringify(snapshot), now()]);
+  }
+  if (!commentId) {
+    const n = await one("SELECT COUNT(*) AS k FROM reports WHERE message_id = $1", [ref]);
+    if (Number(n ? n.k : 0) >= HIDE_AFTER_REPORTS) await q("UPDATE posts SET hidden_at = $1 WHERE id = $2 AND hidden_at IS NULL", [now(), p.id]);
+  } else {
+    const n = await one("SELECT COUNT(*) AS k FROM reports WHERE message_id = $1", [ref]);
+    if (Number(n ? n.k : 0) >= HIDE_AFTER_REPORTS) await q("UPDATE post_comments SET removed_at = $1 WHERE id = $2", [now(), commentId]);
+  }
+  return {};
+}
+
 async function userById(userId) {
   return one("SELECT * FROM users WHERE id = $1", [userId]);
 }
@@ -719,4 +886,6 @@ module.exports = {
   blockedEither, blockSet, blockedByMe, block, unblock, blockedList, report,
   addMessage, messages, messagesAfter, markRead, setPinned, pinnedMessages,
   saveMedia, getMedia, mediaOwner, loadGame, saveGame,
+  createPost, postsToday, postRow, postsOut, listPosts, visiblePost, likePost, savePost,
+  postComments, addComment, removeComment, removePost, reportPost,
 };
