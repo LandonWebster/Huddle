@@ -151,6 +151,18 @@ Code: `billing.js`.
   when Twilio hasn't priced a call after 2 hours).
 - Stripe test mode: use an `sk_test_...` key and card 4242 4242 4242 4242.
 
+### 911
+
+Type 911 (or tap Phone > Emergency: call 911, two taps) to call 911 through Twilio. 911 is never
+blocked: no balance, daily limit or time limit applies, and any phone call in progress is hung
+up first. Each person saves their emergency address (Twilio "Emergency Calling") on their own
+Huddle number; the owner saves theirs on the main number. Dispatchers see that address, not GPS.
+Calling 933 is Twilio's free test that reads back the number and address. Without a registered
+address the call still goes through (the dispatcher won't have the address, and Twilio charges
+a fee for 911 calls from numbers with no address). A number with a 911 address costs about
+$0.75 more a month (`PHONE_911_MONTHLY`), added to a paying person's monthly charge. Never test
+by calling 911 itself.
+
 Setup (one time):
 1. Make a Twilio account, upgrade it, and buy one local number with Voice (~$1.15/month).
 2. Copy the **Account SID** and **Auth Token** into Render as `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.

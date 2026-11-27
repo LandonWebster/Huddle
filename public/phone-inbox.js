@@ -56,7 +56,7 @@
     return "";
   }
 
-  let view = null; // "list" | "thread" | "contact" | "cell" | "billing"
+  let view = null; // "list" | "thread" | "contact" | "cell" | "billing" | "e911"
   let current = null; // number open in the thread view
   let tab = "calls"; // list tab: "calls" | "contacts"
   let contacts = []; // [{ number, name }], sorted by name
@@ -89,12 +89,12 @@
   }
   window.addEventListener("popstate", () => {
     if (root.hidden) return;
-    if (view === "contact" || view === "thread" || view === "cell" || view === "billing") { goBack(); history.pushState({ huddlePhone: 1 }, ""); }
+    if (view === "contact" || view === "thread" || view === "cell" || view === "billing" || view === "e911") { goBack(); history.pushState({ huddlePhone: 1 }, ""); }
     else hide();
   });
   const goBack = () => {
     if (view === "contact" && editBack) editBack();
-    else if (view === "thread" || view === "contact" || view === "cell" || view === "billing") openList();
+    else if (view === "thread" || view === "contact" || view === "cell" || view === "billing" || view === "e911") openList();
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
   openBtn.onclick = () => {
@@ -116,6 +116,7 @@
       </header>
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
+        <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
         <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
@@ -143,6 +144,7 @@
     renderCellRow();
     $0('[data-act="cell"]').onclick = openCell;
     $0('[data-act="billing"]').onclick = openBilling;
+    $0('[data-act="e911"]').onclick = openE911;
     const $ = (s) => root.querySelector(s);
     $('[data-act="back"]').onclick = goBack;
     const input = $(".ph-new input"), errEl = $(".ph-err");
@@ -151,7 +153,12 @@
       errEl.textContent = n ? "" : "Type a 10-digit phone number";
       return n;
     };
-    $(".ph-new").onsubmit = (e) => { e.preventDefault(); const n = num(); if (n) callNumber(n); };
+    $(".ph-new").onsubmit = (e) => {
+      e.preventDefault();
+      const short = input.value.replace(/\D/g, "");
+      if (short === "911" || short === "933") { callNumber(short); return; }
+      const n = num(); if (n) callNumber(n);
+    };
     await loadList();
   }
   async function loadList() {
@@ -254,6 +261,83 @@
       </button><button type="button" class="ch-icon ph-callback" data-call="${esc(c.number)}" aria-label="Call ${esc(label(c.number))} back">${IC.phone}</button></li>`).join("");
     list.querySelectorAll("button[data-n]").forEach((b) => { b.onclick = () => openThread(b.dataset.n); });
     list.querySelectorAll("button[data-call]").forEach((b) => { b.onclick = () => callNumber(b.dataset.call); });
+  }
+
+  // ---------- 911 ----------
+  async function openE911() {
+    view = "e911";
+    root.innerHTML = `
+      <header class="ch-head">
+        <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
+        <strong>Emergency 911</strong>
+        <span class="ch-sp"></span>
+      </header>
+      <div class="ch-body ph-cell ph-sos">
+        <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
+        <p class="ph-small ph-center">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved below, <b>not your GPS location</b>. Always say where you are.</p>
+        <div class="ph-e911"><p class="ch-empty">Loading…</p></div>
+      </div>`;
+    $0('[data-act="back"]').onclick = goBack;
+    const b = $0('[data-act="call911"]');
+    let armed = null;
+    b.onclick = () => {
+      if (!armed) {
+        b.textContent = "Tap again to call 911";
+        b.classList.add("armed");
+        armed = setTimeout(() => { armed = null; b.textContent = "Call 911"; b.classList.remove("armed"); }, 4000);
+        return;
+      }
+      clearTimeout(armed); armed = null;
+      b.textContent = "Calling 911…";
+      callNumber("911");
+    };
+    let j;
+    try { j = await api("GET", "e911"); } catch (e) { $0(".ph-e911").innerHTML = `<p class="ch-err">${esc(e.message)}</p>`; return; }
+    renderE911(j);
+  }
+  const E911_STATUS = {
+    registered: "✓ Registered: 911 dispatchers see this address",
+    "pending-registration": "Being registered (this can take a few minutes)",
+    "registration-failure": "Registration failed. Check the address and save it again.",
+    unregistered: "Not registered yet",
+  };
+  function renderE911(j) {
+    if (view !== "e911") return;
+    const box = $0(".ph-e911");
+    if (!j.number) {
+      box.innerHTML = `<p class="ph-warn">Your 911 address isn't set. 911 calls from Huddle still go through, but the dispatcher won't know where you are and may see a different address. Say your address right away, or use your phone's own dialer.</p>
+        <p class="ph-small">To save your address, get your own Huddle number first (Phone &gt; Make Huddle ring when you miss a call).</p>`;
+      return;
+    }
+    const a = j.address || {};
+    const st = j.status ? E911_STATUS[j.status] || j.status : null;
+    box.innerHTML = `
+      <h3 class="ph-log-head">Your 911 address</h3>
+      <p class="ph-small">Registered on your Huddle number ${esc(pretty(j.number))}. Update it whenever you move.</p>
+      ${st ? `<p class="${j.status === "registered" ? "ph-ok" : "ph-warn"}">${esc(st)}</p>` : '<p class="ph-warn">No address saved yet. 911 calls still go through, but say where you are.</p>'}
+      <form class="ph-contact">
+        <label>Name<input name="name" maxlength="60" autocomplete="name" value="${esc(a.name || "")}" required></label>
+        <label>Street address<input name="street" maxlength="100" autocomplete="address-line1" value="${esc(a.street || "")}" required></label>
+        <label>Apt, suite, floor (optional)<input name="street2" maxlength="60" autocomplete="address-line2" value="${esc(a.street2 || "")}"></label>
+        <label>City<input name="city" maxlength="60" autocomplete="address-level2" value="${esc(a.city || "")}" required></label>
+        <div class="ph-row2">
+          <label>State<input name="region" maxlength="2" autocomplete="address-level1" placeholder="PA" value="${esc(a.region || "")}" required></label>
+          <label>ZIP<input name="postal" maxlength="10" inputmode="numeric" autocomplete="postal-code" value="${esc(a.postal || "")}" required></label>
+        </div>
+        <p class="ch-err"></p>
+        <button class="btn primary" type="submit">Save 911 address</button>
+      </form>
+      ${st ? `<button class="btn" type="button" data-act="test933">Test it: call 933 (free, reads back your address)</button>` : ""}`;
+    const form = box.querySelector("form"), err = form.querySelector(".ch-err");
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(["name", "street", "street2", "city", "region", "postal"].map((k) => [k, form[k].value]));
+      form.querySelector('[type="submit"]').disabled = true;
+      try { renderE911(await api("POST", "e911", body)); toast("911 address saved"); }
+      catch (x) { err.textContent = x.message; form.querySelector('[type="submit"]').disabled = false; }
+    };
+    const t = box.querySelector('[data-act="test933"]');
+    if (t) t.onclick = () => callNumber("933");
   }
 
   // ---------- Phone balance (pay-as-you-go calls; the phone's owner doesn't pay) ----------

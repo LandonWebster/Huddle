@@ -114,7 +114,7 @@ async function doSetup(base) {
   const keys = await twilio("GET", "/Keys.json?PageSize=100");
   for (const k of keys.keys || []) if (k.friendly_name === KEY_NAME) await twilio("DELETE", `/Keys/${k.sid}.json`).catch(() => {});
   const key = await twilio("POST", "/Keys.json", { FriendlyName: KEY_NAME });
-  return { keySid: key.sid, keySecret: key.secret, appSid: app.sid, callerId, voiceUrl, base, owned: !!owned };
+  return { keySid: key.sid, keySecret: key.secret, appSid: app.sid, callerId, voiceUrl, base, owned: !!owned, ownedSid: owned ? owned.sid : null };
 }
 
 // ---------- Access token (a signed JWT, the same thing Twilio's own library makes) ----------
@@ -189,6 +189,11 @@ async function tokenFor(user, req, body = {}) {
   const identity = identityOf(user);
   const line = await isLineUser(user).catch(() => false);
   if (body.listen && !line) return { status: 200, body: { line: false } };
+  // 911 is never blocked: no daily limit, no balance check, nothing saved about who dials.
+  if (body.emergency) {
+    try { const s = await ready(req); return { status: 200, body: { token: accessToken(s, identity, 3600), callerId: s.callerId, line } }; }
+    catch (e) { return fail(e); }
+  }
   if (!body.listen && overLimit(identity, false)) return { status: 429, body: { error: `You've made ${PER_DAY()} phone calls today. Try again tomorrow.` } };
   if (!body.listen && (await payer(user.id)) && (await billing.minutesLeft(user.id, "out")) < 1) {
     return { status: 402, body: { error: "Add money to your phone balance first (Phone > Balance)", needsCredit: true } };
@@ -317,6 +322,7 @@ async function appRoute(method, sub, user, url, body, req) {
     return { status: 200, body: { contacts: await store.contacts(user.id) } };
   }
   if (sub === "cell") return cellRoute(method, user, body, req);
+  if (sub === "e911") return e911Route(method, user, body || {}, req);
   if (method === "GET" && sub === "calls") return { status: 200, body: { calls: await store.phoneCalls(user.id) } };
   // The app's phone line is connected and can ring (so a waiting caller can be put through).
   if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
@@ -404,6 +410,65 @@ const ringXml = (s, userId, from, name, viaCell, limit = MAX_MINUTES() * 60) => 
 };
 const HOLD_TRIES = 6; // about 20 seconds
 
+// ---------- 911 ----------
+// A 911 call shows the dispatcher the emergency address registered on the calling number (Twilio
+// "Emergency Calling"). Each person registers their own address on their own Huddle number; the
+// owner registers theirs on the main number. People without their own number call from the main
+// number (the dispatcher may see the wrong address, so the app tells them to say where they are).
+// 911 calls are never blocked or charged to the person: no balance, limit or time checks.
+async function e911NumberFor(userId, s) {
+  const mine = await store.numberOf(userId).catch(() => null);
+  if (mine) return { number: mine.number, sid: mine.sid, own: true };
+  if (await ownerById(userId).catch(() => false)) return s.ownedSid ? { number: s.callerId, sid: s.ownedSid, own: true } : null;
+  return null;
+}
+async function emergencyDial(s, userId, short) {
+  let from = s.callerId;
+  try {
+    const reg = await store.e911Of(userId);
+    const n = await e911NumberFor(userId, s);
+    if (reg && n && reg.number === n.number) from = n.number;
+    else if (n) from = n.number;
+  } catch {}
+  console.log(short === "911" ? "EMERGENCY CALL (911)" : "911 address test call (933)");
+  store.phoneAdd(userId, short, "call_out", { status: "emergency" }).then(() => pushTo(userId, { type: "phone-update", number: short })).catch(() => {});
+  return `<Dial callerId="${xml(from)}" answerOnBridge="true"><Number>${short}</Number></Dial>`;
+}
+const E911_FIELDS = { name: 60, street: 100, street2: 60, city: 60, region: 2, postal: 10 };
+async function e911Route(method, user, body, req) {
+  let s;
+  try { s = await ready(req); } catch (e) { return fail(e); }
+  const n = await e911NumberFor(user.id, s);
+  let reg = await store.e911Of(user.id);
+  if (method === "POST") {
+    if (!n) return { status: 400, body: { error: "Get your own Huddle number first, so 911 can show your address" } };
+    const a = {};
+    for (const [k, max] of Object.entries(E911_FIELDS)) a[k] = String(body[k] || "").replace(/\s+/g, " ").trim().slice(0, max);
+    a.region = a.region.toUpperCase();
+    if (!a.name || !a.street || !a.city || !/^[A-Z]{2}$/.test(a.region) || !/^\d{5}(-\d{4})?$/.test(a.postal)) {
+      return { status: 400, body: { error: "Fill in your name, street, city, 2-letter state and ZIP code" } };
+    }
+    const form = { CustomerName: a.name, Street: a.street, StreetSecondary: a.street2, City: a.city, Region: a.region, PostalCode: a.postal, EmergencyEnabled: "true", AutoCorrectAddress: "false" };
+    let addressSid = reg && reg.addressSid;
+    try {
+      if (addressSid) await twilio("POST", `/Addresses/${addressSid}.json`, form);
+      else addressSid = (await twilio("POST", "/Addresses.json", { ...form, IsoCountry: "US", FriendlyName: "Huddle 911" })).sid;
+      await twilio("POST", `/IncomingPhoneNumbers/${n.sid}.json`, { EmergencyAddressSid: addressSid });
+    } catch (e) {
+      if (addressSid && !(reg && reg.addressSid)) twilio("DELETE", `/Addresses/${addressSid}.json`).catch(() => {});
+      const msg = e.code === 21629 ? `Check the address. Twilio suggests: ${e.message}` : e.code === 21628 ? "That address couldn't be found. Check the street, city, state and ZIP." : "Couldn't save the address right now. Try again.";
+      return { status: 400, body: { error: msg } };
+    }
+    await store.saveE911(user.id, addressSid, n.number, a);
+    reg = await store.e911Of(user.id);
+  }
+  let status = null;
+  if (reg && n && reg.number === n.number) {
+    try { status = (await twilio("GET", `/IncomingPhoneNumbers/${n.sid}.json`)).emergency_address_status || null; } catch {}
+  }
+  return { status: 200, body: { number: n ? n.number : null, mainNumber: s.callerId, address: reg && n && reg.number === n.number ? reg.address : null, status } };
+}
+
 // ---------- Twilio webhooks (/twilio/...) ----------
 // Twilio signs each webhook: base64(HMAC-SHA1(auth token, url + sorted key/values)).
 function validSignature(url, params, sig) {
@@ -434,6 +499,9 @@ const routes = {
   // A call the app started (outgoing).
   async voice(s, p) {
     const identity = userIdOf(p.From);
+    // 911 (and 933, Twilio's free address test) go through before every other check.
+    const short = String(p.To || "").replace(/\D/g, "");
+    if (identity && (short === "911" || short === "933")) return emergencyDial(s, identity, short);
     const to = normalize(p.To);
     const why = allowed(to);
     if (!identity || why) return `<Say>${xml(why || "Sorry, that call can't be made.")}</Say><Hangup/>`;

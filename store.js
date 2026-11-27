@@ -143,6 +143,13 @@ CREATE TABLE IF NOT EXISTS phone_numbers (
   paid_until BIGINT NOT NULL,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS phone_e911 (
+  user_id TEXT PRIMARY KEY,
+  address_sid TEXT NOT NULL,
+  number TEXT NOT NULL,
+  address TEXT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -650,6 +657,22 @@ async function deleteNumber(userId) {
   await q("DELETE FROM phone_numbers WHERE user_id = $1", [userId]);
 }
 
+// ---------- 911: the emergency address each person registered on their Huddle number ----------
+async function e911Of(userId) {
+  const r = await one("SELECT * FROM phone_e911 WHERE user_id = $1", [userId]);
+  if (!r) return null;
+  let address = {};
+  try { address = JSON.parse(r.address); } catch {}
+  return { userId, addressSid: r.address_sid, number: r.number, address, at: Number(r.updated_at) };
+}
+async function saveE911(userId, addressSid, number, address) {
+  await q("DELETE FROM phone_e911 WHERE user_id = $1", [userId]);
+  await q("INSERT INTO phone_e911 (user_id, address_sid, number, address, updated_at) VALUES ($1, $2, $3, $4, $5)", [userId, addressSid, number, JSON.stringify(address), now()]);
+}
+async function deleteE911(userId) {
+  await q("DELETE FROM phone_e911 WHERE user_id = $1", [userId]);
+}
+
 // ---------- Small saved settings, and notification subscriptions ----------
 async function getSetting(key) {
   const r = await one("SELECT value FROM app_settings WHERE key = $1", [key]);
@@ -680,6 +703,7 @@ async function userByName(name) {
 }
 
 module.exports = {
+  e911Of, saveE911, deleteE911,
   numberOf, numberUser, saveNumber, setNumberPaidUntil, numbersDue, deleteNumber,
   ledgerAdd, ledgerByRef, ledgerUpdate, ledgerPending, ledgerBalance, ledgerRecent,
   cellOf, cellUser, linkedCells, linkCell, unlinkCell,

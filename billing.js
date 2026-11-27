@@ -22,6 +22,7 @@
 //  STRIPE_SECRET_KEY   from Stripe > Developers > API keys (sk_test_... to try it, sk_live_... for real)
 //  PHONE_CARD_FEE      "customer" (default): people pay the card fee on top; "owner": you cover it
 //  PHONE_NUMBER_MONTHLY what a personal Huddle number costs each month (default 1.15, Twilio's price)
+//  PHONE_911_MONTHLY   added to a number's month once it has a 911 address (default 0.75, Twilio's fee)
 //  PHONE_RATE_OUT      backup cost per minute for calls out, in dollars (default 0.02)
 //  PHONE_RATE_IN       backup cost per minute for calls in (default 0.015)
 const store = require("./store");
@@ -35,6 +36,7 @@ const RATE = { out: () => Number(env("PHONE_RATE_OUT", "0.02")) || 0.02, in: () 
 const AMOUNTS = [1, 5, 10, 20]; // dollars you can add at once
 const RECORDING_PER_MIN = 0.0025;
 const MONTHLY = () => Number(env("PHONE_NUMBER_MONTHLY", "1.15")) || 1.15;
+const E911_MONTHLY = () => Number(env("PHONE_911_MONTHLY", "0.75")) || 0.75;
 const DAY = 24 * 3600 * 1000, MONTH = 30 * DAY, GRACE = 7 * DAY;
 
 let twilio = null; // set by phone.js: (method, path, form) => Promise<json>
@@ -113,16 +115,22 @@ async function buyNumber(user, base, nearCell) {
 async function releaseNumber(userId, why) {
   const n = await store.numberOf(userId);
   if (!n) return;
-  await twilio("DELETE", `/IncomingPhoneNumbers/${n.sid}.json`).catch((e) => console.warn("release number", e.message));
+  const e = await store.e911Of(userId);
+  if (e) await twilio("POST", `/IncomingPhoneNumbers/${n.sid}.json`, { EmergencyAddressSid: "" }).catch(() => {});
+  await twilio("DELETE", `/IncomingPhoneNumbers/${n.sid}.json`).catch((err) => console.warn("release number", err.message));
+  if (e) twilio("DELETE", `/Addresses/${e.addressSid}.json`).catch(() => {}); // fails while still attached; harmless
+  await store.deleteE911(userId);
   await store.deleteNumber(userId);
   console.log(`Released a personal number (${why})`);
 }
 // Each month: charge the next month, or give the number back after the grace week.
 async function renewNumbers() {
   for (const n of await store.numbersDue(Date.now())) {
-    if ((await balance(n.userId)) >= MONTHLY() * M) {
+    // Twilio charges a little more each month for a number with a 911 address.
+    const month = MONTHLY() + ((await store.e911Of(n.userId)) ? E911_MONTHLY() : 0);
+    if ((await balance(n.userId)) >= month * M) {
       const next = n.paidUntil + MONTH;
-      await store.ledgerAdd(n.userId, "number", `${n.sid}:${next}`, -MONTHLY() * M, "done", { number: n.number });
+      await store.ledgerAdd(n.userId, "number", `${n.sid}:${next}`, -month * M, "done", { number: n.number });
       await store.setNumberPaidUntil(n.userId, next);
     } else if (Date.now() > n.paidUntil + GRACE) {
       await releaseNumber(n.userId, "balance ran out");
