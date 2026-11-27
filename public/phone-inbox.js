@@ -115,6 +115,7 @@
       </header>
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
+        <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
           <input type="tel" inputmode="tel" autocomplete="tel" placeholder="Phone number" aria-label="Phone number" maxlength="22">
           <button class="btn" type="button" data-act="text">Text</button>
@@ -136,6 +137,7 @@
       };
     });
     renderNotify();
+    renderCallerId();
     const $ = (s) => root.querySelector(s);
     $('[data-act="back"]').onclick = goBack;
     const input = $(".ph-new input"), errEl = $(".ph-err");
@@ -157,7 +159,7 @@
     renderBadge();
     if (view !== "list") return;
     const mine = root.querySelector(".ph-mine");
-    if (j.number) { mine.hidden = false; mine.textContent = `Your Huddle number: ${pretty(j.number)}`; }
+    if (j.number) { mine.hidden = false; mine.textContent = `Your Huddle number: ${pretty(j.number)} (texts and call-backs)`; }
     const list = root.querySelector(".ph-list");
     if (tab === "calls") return renderCalls(list);
     if (!j.threads.length) {
@@ -203,6 +205,22 @@
       </button><button type="button" class="ch-icon ph-callback" data-call="${esc(c.number)}" aria-label="Call ${esc(pretty(c.number))} back">${IC.phone}</button></li>`).join("");
     list.querySelectorAll("button[data-n]").forEach((b) => { b.onclick = () => openThread(b.dataset.n); });
     list.querySelectorAll("button[data-call]").forEach((b) => { b.onclick = () => callNumber(b.dataset.call); });
+  }
+
+  // ---------- Which number people see when you call ----------
+  async function renderCallerId() {
+    const box = root.querySelector(".ph-show");
+    if (!box) return;
+    let j;
+    try { j = await api("GET", "callerid"); } catch { return; }
+    if (!root.contains(box) || !j.canChoose) return;
+    const sel = box.querySelector("select");
+    sel.innerHTML = j.options.map((o) => `<option value="${esc(o.number)}"${o.number === j.selected ? " selected" : ""}>${esc(o.label)}: ${esc(pretty(o.number))}</option>`).join("");
+    box.hidden = false;
+    sel.onchange = async () => {
+      try { await api("POST", "callerid", { number: sel.value }); toast("Saved. Your calls show " + pretty(sel.value)); }
+      catch (e) { toast(e.message, 5000); renderCallerId(); }
+    };
   }
 
   // ---------- Notifications on/off ----------

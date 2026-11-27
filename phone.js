@@ -188,12 +188,51 @@ async function tokenFor(user, req, body = {}) {
   const line = await isLineUser(user).catch(() => false);
   if (body.listen && !line) return { status: 200, body: { line: false } };
   if (!body.listen && overLimit(identity, false)) return { status: 429, body: { error: `You've made ${PER_DAY()} phone calls today. Try again tomorrow.` } };
-  // Whoever dials out last is the default person for call-backs from new numbers.
-  if (!body.listen) store.setSetting("phone_user", user.id).catch(() => {});
+  // Whoever dials out last is the default person for call-backs from new numbers. The first
+  // person to ever dial out is the phone's owner (unless PHONE_OWNER says otherwise).
+  if (!body.listen) {
+    store.setSetting("phone_user", user.id).catch(() => {});
+    store.getSetting("phone_owner_id").then((o) => o || store.setSetting("phone_owner_id", user.id)).catch(() => {});
+  }
   try {
     const s = await ready(req);
     return { status: 200, body: { token: accessToken(s, identity, 3600), callerId: s.callerId, maxMinutes: MAX_MINUTES(), line } };
   } catch (e) { return fail(e); }
+}
+
+// ---------- Which number shows when calling out ----------
+// The Huddle (Twilio) number, or a cell verified in Twilio (a "Verified Caller ID"). Only the
+// phone's owner can show a verified cell; everyone else shows the Huddle number. Texts always
+// come from the Huddle number (Twilio can't text from a verified cell).
+async function isOwner(user) {
+  const owner = env("PHONE_OWNER");
+  if (owner) return store.nameKey(owner) === user.username;
+  const id = await store.getSetting("phone_owner_id");
+  return !id || id === user.id;
+}
+let verified = { list: [], at: 0 };
+async function verifiedNumbers() {
+  if (Date.now() - verified.at < 5 * 60 * 1000) return verified.list;
+  const j = await twilio("GET", "/OutgoingCallerIds.json?PageSize=20");
+  verified = { list: (j.outgoing_caller_ids || []).map((v) => v.phone_number).filter(Boolean), at: Date.now() };
+  return verified.list;
+}
+async function callerOptions(user, s) {
+  const opts = [{ number: s.callerId, label: "Huddle number" }];
+  if (!(await isOwner(user))) return { options: opts, canChoose: false };
+  try {
+    for (const n of await verifiedNumbers()) if (n !== s.callerId) opts.push({ number: n, label: "Your cell" });
+  } catch (e) { console.warn("verified numbers:", e.message); }
+  return { options: opts, canChoose: opts.length > 1 };
+}
+// The caller ID for this person's outgoing calls. By default the owner's verified cell, if any.
+async function callerIdFor(userId, s) {
+  const user = { id: userId, username: (await store.userById(userId) || {}).username };
+  const { options } = await callerOptions(user, s);
+  const pick = await store.getSetting("callerid:" + userId);
+  if (pick && options.some((o) => o.number === pick)) return pick;
+  if (!pick && options.length > 1) return options[1].number;
+  return s.callerId;
 }
 
 // Everything else under /api/phone/...: the Phone screen (texts, calls, voicemails).
@@ -213,6 +252,17 @@ async function appRoute(method, sub, user, url, body, req) {
     return { status: 200, body: { unread: await store.phoneUnread(user.id) } };
   }
   if (method === "POST" && sub === "text") return sendText(user, body, req);
+  if (sub === "callerid") {
+    let s;
+    try { s = await ready(req); } catch (e) { return fail(e); }
+    const { options, canChoose } = await callerOptions(user, s);
+    if (method === "POST") {
+      const n = normalize(body.number);
+      if (!canChoose || !options.some((o) => o.number === n)) return { status: 400, body: { error: "You can't show that number" } };
+      await store.setSetting("callerid:" + user.id, n);
+    }
+    return { status: 200, body: { options, canChoose, selected: await callerIdFor(user.id, s) } };
+  }
   if (method === "GET" && sub === "calls") return { status: 200, body: { calls: await store.phoneCalls(user.id) } };
   // The app's phone line is connected and can ring (so a waiting caller can be put through).
   if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
@@ -324,7 +374,8 @@ const routes = {
     if (overLimit("u" + identity, true)) return "<Say>You've reached today's phone call limit.</Say><Hangup/>";
     console.log(`Phone call to ${to.slice(0, -4)}••••`);
     const done = `${s.base}/twilio/out-done?u=${encodeURIComponent(identity)}&n=${encodeURIComponent(to)}`;
-    return `<Dial callerId="${xml(s.callerId)}" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(done)}"><Number>${xml(to)}</Number></Dial>`;
+    const callerId = await callerIdFor(identity, s).catch(() => s.callerId);
+    return `<Dial callerId="${xml(callerId)}" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(done)}"><Number>${xml(to)}</Number></Dial>`;
   },
   // The outgoing call ended: save it in the Phone screen.
   async "out-done"(s, p, q) {
