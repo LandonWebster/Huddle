@@ -116,7 +116,6 @@
       </header>
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
-        <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
         <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
@@ -131,6 +130,7 @@
           <button type="button" role="tab" data-tab="contacts" class="${tab === "contacts" ? "on" : ""}">Contacts</button>
         </div>
         <ul class="ch-list ph-list"><li class="ch-empty">Loading…</li></ul>
+        <button type="button" class="ph-cell-row ph-sos-row ph-sos-bottom" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
       </div>`;
     root.querySelectorAll("[data-tab]").forEach((b) => {
       b.onclick = () => {
@@ -456,20 +456,43 @@
             <p class="ph-small ph-center">$${up.month.toFixed(2)} first month + $${up.credit.toFixed(2)} call credit + ${money(up.fee)} card fee</p>` : ""}`;
     } else if (j.huddleNumber) {
       const hn = j.huddleNumber.replace(/^\+/, ""), hn10 = hn.replace(/^1(?=\d{10}$)/, ""); // Verizon wants 10 digits
+      // AT&T/T-Mobile (GSM) let you pick how long your cell rings first: 5 to 30 seconds.
+      let secs = 20;
+      try { secs = Number(localStorage.getItem("huddle:ringSecs")) || 20; } catch {}
+      if (![5, 10, 15, 20, 25, 30].includes(secs)) secs = 20;
       html += `
         <p class="ph-ok">Your Huddle number: <b>${esc(pretty(j.huddleNumber))}</b></p>
         <p>Set your cell to forward calls you don't answer to it. Your cell still rings first; if you don't pick up, Huddle rings. Open your phone's dialer, type the code for your carrier, and press call:</p>
+        <label class="ph-ring">Ring my cell for
+          <select data-act="ringsecs" aria-label="Seconds your cell rings before Huddle">
+            ${[5, 10, 15, 20, 25, 30].map((n) => `<option value="${n}"${n === secs ? " selected" : ""}>${n} seconds</option>`).join("")}
+          </select>
+          then send the call to Huddle</label>
         <ul class="ph-steps">
-          <li><b>AT&amp;T or T-Mobile</b><code>**61*${esc(hn)}#</code></li>
+          <li><b>AT&amp;T or T-Mobile</b><code class="ph-gsm">**61*${esc(hn)}**${secs}#</code></li>
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
         </ul>
+        <p class="ph-small">The number at the end of the AT&amp;T/T-Mobile code (<b class="ph-secs">${secs}</b>) is how many seconds your cell rings before the call goes to Huddle. Verizon's code has no timer: your cell rings about 4 or 5 times (around 25 seconds) first. To change the time later, just dial the new code.</p>
         <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>`;
     }
     // Optional: your cell as caller ID.
     let cellHtml = "";
-    if (j.cell) {
+    if (j.cell && j.callerReady !== false) {
       cellHtml = `<p class="ph-ok">&#10003; Your cell <b>${esc(pretty(j.cell))}</b> is linked. It can show as your caller ID (pick it under "Calls show").</p>
         <button class="btn" type="button" data-act="unlink">Unlink this cell</button>`;
+    } else if (j.cell && !(j.pending && !j.pending.failed)) {
+      cellHtml = `<p class="ph-ok">&#10003; Your cell <b>${esc(pretty(j.cell))}</b> is linked.</p>
+        <p class="ph-small">To also show it as your caller ID, the phone company needs one quick call: we call your cell and you type the code shown here.</p>
+        <button class="btn" type="button" data-act="callcell">Call me with a code</button>
+        <button class="btn" type="button" data-act="unlink">Unlink this cell</button>`;
+    } else if (j.pending && !j.pending.failed && j.pending.via === "text") {
+      cellHtml = `<p>We texted a 6-digit code to <b>${esc(pretty(j.pending.number))}</b>. Type it here:</p>
+        <form class="ph-contact ph-codeform">
+          <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" required aria-label="Code from the text">
+          <p class="ch-err"></p>
+          <button class="btn primary" type="submit">Link my cell</button>
+        </form>
+        <button class="btn" type="button" data-act="restart">Use a different number</button>`;
     } else if (j.pending && !j.pending.failed) {
       cellHtml = `<p>We're calling <b>${esc(pretty(j.pending.number))}</b> now. Answer it and type this code on the keypad:</p>
         <p class="ph-code">${esc(j.pending.code)}</p>
@@ -477,18 +500,29 @@
         <button class="btn" type="button" data-act="restart">Use a different number</button>`;
       cellPoll = setTimeout(async () => { try { renderCell(await api("GET", "cell")); } catch {} }, 3000);
     } else {
-      cellHtml = `<p class="ph-small">Want people you call from Huddle to see your cell number? Prove the cell is yours: we call it and you type a code.</p>
+      const known = (j.verifiedCells || []).map((n) => `<button class="btn primary" type="button" data-act="linkv" data-n="${esc(n)}">Link ${esc(pretty(n))}</button>`).join("");
+      cellHtml = (known ? `<p class="ph-small">Already verified in your Twilio account, so no code needed:</p>${known}<p class="ph-small">Or link a different cell:</p>` : "") +
+        `<p class="ph-small">Want people you call from Huddle to see your cell number? Prove the cell is yours with a code: we either call your cell (you type the code shown here on the keypad) or text you a code (you type it here).</p>
         ${j.pending && j.pending.failed ? '<p class="ch-err">That didn\'t work. Check the number and try again.</p>' : ""}
         <form class="ph-contact">
           <label>Your cell number<input name="number" type="tel" inputmode="tel" maxlength="22" placeholder="(555) 123-4567" value="${esc(j.pending ? pretty(j.pending.number) : "")}" required></label>
           <p class="ch-err"></p>
-          <button class="btn" type="submit">Call me with a code</button>
+          <button class="btn" type="submit" data-via="call">Call me with a code</button>
+          <button class="btn" type="submit" data-via="text">Text me a code</button>
         </form>`;
     }
     html += `<h3 class="ph-log-head">Your cell as caller ID</h3>` + cellHtml;
     if (j.ownNumber) html += `<button class="btn danger ph-giveup" type="button" data-act="giveup">Give up my Huddle number</button>`;
     box.innerHTML = html;
     const on = (sel, fn) => { const el = box.querySelector(sel); if (el) el.onclick = fn; };
+    const ringSel = box.querySelector('[data-act="ringsecs"]');
+    if (ringSel) ringSel.onchange = () => {
+      const n = ringSel.value;
+      try { localStorage.setItem("huddle:ringSecs", n); } catch {}
+      const code = box.querySelector(".ph-gsm");
+      code.textContent = code.textContent.replace(/\*\*\d+#$/, `**${n}#`);
+      box.querySelector(".ph-secs").textContent = n;
+    };
     on('[data-act="money"]', openBilling);
     on('[data-act="upgrade"]', async (e) => {
       e.target.disabled = true;
@@ -509,16 +543,39 @@
       try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked"); } catch (x) { toast(x.message, 5000); }
     });
     on('[data-act="restart"]', () => renderCell({ ...j, pending: null }));
-    const form = box.querySelector("form.ph-contact");
+    on('[data-act="callcell"]', async (e) => {
+      e.target.disabled = true;
+      try { renderCell(await api("POST", "cell", { number: j.cell })); }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
+    });
+    box.querySelectorAll('[data-act="linkv"]').forEach((b) => b.onclick = async () => {
+      b.disabled = true;
+      try { renderCell(await api("POST", "cell", { action: "link-verified", number: b.dataset.n })); toast("Cell linked"); }
+      catch (x) { toast(x.message, 5000); b.disabled = false; }
+    });
+    const codeForm = box.querySelector("form.ph-codeform");
+    if (codeForm) {
+      const err = codeForm.querySelector(".ch-err");
+      codeForm.code.focus();
+      codeForm.onsubmit = async (e) => {
+        e.preventDefault();
+        codeForm.querySelector("button").disabled = true;
+        try { renderCell(await api("POST", "cell", { action: "code", code: codeForm.code.value })); toast("Cell linked"); }
+        catch (x) { err.textContent = x.message; codeForm.querySelector("button").disabled = false; }
+      };
+    }
+    const form = box.querySelector("form.ph-contact:not(.ph-codeform)");
     if (form) {
       const err = form.querySelector(".ch-err");
       form.onsubmit = async (e) => {
         e.preventDefault();
         const n = normalize(form.number.value);
         if (!n) { err.textContent = "Type a 10-digit phone number"; return; }
-        form.querySelector("button").disabled = true;
-        try { renderCell(await api("POST", "cell", { number: n })); }
-        catch (x) { err.textContent = x.message; form.querySelector("button").disabled = false; }
+        const via = (e.submitter && e.submitter.dataset.via) || "call";
+        const btns = form.querySelectorAll("button");
+        btns.forEach((b) => b.disabled = true);
+        try { renderCell(await api("POST", "cell", via === "text" ? { action: "text", number: n } : { number: n })); }
+        catch (x) { err.textContent = x.message; btns.forEach((b) => b.disabled = false); }
       };
     }
   }

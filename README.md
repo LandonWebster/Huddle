@@ -120,8 +120,11 @@ With Twilio set up, Huddle has its own phone number for calls (texting is turned
   can't get them yet.
 - **Your cell** (Phone screen): anyone can link their own cell. Huddle proves it's theirs first
   (Twilio calls it and they type a code shown in Huddle; that also makes it a verified caller ID
-  they can show when calling out). Then they forward unanswered calls to the Huddle number
-  (`**61*<number>#` on AT&T/T-Mobile, `*71<number>` on Verizon) and Huddle rings them. Calls are
+  they can show when calling out), or Twilio Verify texts them a code (works without A2P texting
+  registration; about $0.05 per check; links the cell for forwarding, and showing it as caller ID
+  still needs the call). The owner can link a cell already verified in Twilio with one tap.
+  Then they forward unanswered calls to the Huddle number
+  (`**61*<number>**<seconds>#` on AT&T/T-Mobile, `*71<number>` on Verizon) and Huddle rings them. Calls are
   matched by Twilio's `ForwardedFrom`, so one shared number serves everyone at no extra monthly
   cost. If a carrier doesn't send `ForwardedFrom`, the call falls back to the rule below.
 - Calls from a number go to whoever in Huddle last talked to it; new numbers go to

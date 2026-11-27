@@ -333,7 +333,26 @@ async function appRoute(method, sub, user, url, body, req) {
 // First the person proves the cell is theirs: Twilio calls it and they type the code shown in
 // Huddle. That also verifies it in Twilio, so it can be their caller ID. If Twilio already has
 // it verified (someone verified it by hand), Huddle calls it itself with its own code instead.
-const cellChecks = new Map(); // userId -> { number, code, at, tries }
+// Or Twilio Verify texts them a code (Verify sends from Twilio's own registered senders, so it
+// works without texting registration). A texted code links the cell for forwarding; showing it
+// as caller ID still needs Twilio's one call. The owner can link a cell already verified in
+// Twilio with one tap.
+const cellChecks = new Map(); // userId -> { number, code, at, tries, via }
+let verifySvc = null;
+async function verifyService() {
+  if (verifySvc) return verifySvc;
+  const list = await twilio("GET", "https://verify.twilio.com/v2/Services?PageSize=50");
+  const found = (list.services || []).find((x) => x.friendly_name === "Huddle");
+  verifySvc = found ? found.sid : (await twilio("POST", "https://verify.twilio.com/v2/Services", { FriendlyName: "Huddle", CodeLength: "6" })).sid;
+  return verifySvc;
+}
+async function cellNumberOk(user, s, raw) {
+  const number = normalize(raw);
+  const why = allowed(number);
+  if (why) return { error: why };
+  if (number === s.callerId || (await store.numberUser(number))) return { error: "That's a Huddle number. Type your own cell." };
+  return { number };
+}
 const CHECK_MS = 5 * 60 * 1000;
 const gatherXml = (s, userId, number, lead) =>
   `<Gather numDigits="6" timeout="20" action="${xml(`${s.base}/twilio/cell-code?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(number)}`)}"><Say>${xml(lead)}</Say></Gather><Say>${xml("We didn't get a code. Goodbye.")}</Say>`;
@@ -350,11 +369,47 @@ async function cellRoute(method, user, body, req) {
         .then(() => { verified.at = 0; }).catch(() => {});
     }
     cellChecks.delete(user.id);
-  } else if (method === "POST") {
+  } else if (method === "POST" && body.action === "link-verified") {
+    // Owner: a cell already verified in Twilio (by hand) links with one tap.
     const number = normalize(body.number);
-    const why = allowed(number);
-    if (why) return { status: 400, body: { error: why } };
-    if (number === s.callerId || (await store.numberUser(number))) return { status: 400, body: { error: "That's a Huddle number. Type your own cell." } };
+    const taken = new Set(await store.linkedCells());
+    if (!(await isOwner(user)) || !number || number === s.callerId || taken.has(number) || !(await verifiedNumbers()).includes(number)) {
+      return { status: 400, body: { error: "That number isn't verified in Twilio" } };
+    }
+    await store.linkCell(user.id, number);
+    cellChecks.delete(user.id);
+    pushTo(user.id, { type: "phone-update", kind: "cell" });
+  } else if (method === "POST" && body.action === "text") {
+    const ok = await cellNumberOk(user, s, body.number);
+    if (ok.error) return { status: 400, body: { error: ok.error } };
+    if (overLimit("v:" + user.id, true, 8)) return { status: 429, body: { error: "Too many tries today. Try again tomorrow." } };
+    try {
+      await twilio("POST", `https://verify.twilio.com/v2/Services/${await verifyService()}/Verifications`, { To: ok.number, Channel: "sms" });
+    } catch (e) {
+      console.warn("Verify text failed:", e.message);
+      return { status: 400, body: { error: e.status === 400 ? "Couldn't text that number. Try \"Call me with a code\"." : "Couldn't reach the phone service" } };
+    }
+    cellChecks.set(user.id, { number: ok.number, at: Date.now(), tries: 0, via: "text" });
+  } else if (method === "POST" && body.action === "code") {
+    const check = cellChecks.get(user.id);
+    if (!check || check.via !== "text" || Date.now() - check.at > 10 * 60 * 1000) return { status: 400, body: { error: "That code expired. Start again." } };
+    const code = String(body.code || "").replace(/\D/g, "");
+    if (code.length < 4) return { status: 400, body: { error: "Type the code from the text" } };
+    let r;
+    try { r = await twilio("POST", `https://verify.twilio.com/v2/Services/${await verifyService()}/VerificationCheck`, { To: check.number, Code: code }); }
+    catch (e) { r = { status: e.status === 404 ? "expired" : "error" }; }
+    if (r.status === "approved") {
+      cellChecks.delete(user.id);
+      await store.linkCell(user.id, check.number);
+      pushTo(user.id, { type: "phone-update", kind: "cell" });
+    } else {
+      if (++check.tries >= 5 || r.status === "expired") { cellChecks.delete(user.id); return { status: 400, body: { error: "Too many wrong codes. Start again." } }; }
+      return { status: 400, body: { error: "That code didn't match. Try again." } };
+    }
+  } else if (method === "POST") {
+    const ok = await cellNumberOk(user, s, body.number);
+    if (ok.error) return { status: 400, body: { error: ok.error } };
+    const number = ok.number;
     if (overLimit("v:" + user.id, true, 8)) return { status: 429, body: { error: "Too many tries today. Try again tomorrow." } };
     try {
       const v = await twilio("POST", "/OutgoingCallerIds.json", {
@@ -373,15 +428,26 @@ async function cellRoute(method, user, body, req) {
     }
   }
   const check = cellChecks.get(user.id);
-  if (check && Date.now() - check.at > CHECK_MS) cellChecks.delete(user.id);
+  if (check && Date.now() - check.at > (check.via === "text" ? 10 * 60 * 1000 : CHECK_MS)) cellChecks.delete(user.id);
   const pending = cellChecks.get(user.id);
+  const cell = await store.cellOf(user.id);
+  let list = [];
+  try { list = await verifiedNumbers(); } catch {}
+  // The owner's cells already verified in Twilio (and nobody's linked cell), ready to link.
+  let verifiedCells = [];
+  if (!cell && (await isOwner(user))) {
+    const taken = new Set(await store.linkedCells());
+    verifiedCells = list.filter((n) => n !== s.callerId && !taken.has(n));
+  }
   return { status: 200, body: {
-    cell: await store.cellOf(user.id),
+    cell,
+    callerReady: !!cell && list.includes(cell),
+    verifiedCells,
     ownNumber: !!(await store.numberOf(user.id)),
     needsNumber: !(await store.numberOf(user.id)) && (await payer(user.id)),
     // Where to forward: your own Huddle number. People who pay need one first; the owner uses the main one.
     huddleNumber: (await store.numberOf(user.id)) ? await huddleNumberFor(user.id, s) : (await payer(user.id)) ? null : s.callerId,
-    pending: pending ? { number: pending.number, code: pending.code, failed: !!pending.failed } : null,
+    pending: pending ? { number: pending.number, code: pending.via === "text" ? null : pending.code, via: pending.via || "call", failed: !!pending.failed } : null,
   } };
 }
 async function cellProven(userId, number) {
