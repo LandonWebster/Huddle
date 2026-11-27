@@ -175,7 +175,8 @@ const pushTo = (userId, msg) => { try { live().push(userId, msg); } catch {} };
 // Is this person the one who gets calls and texts? (So the app knows to listen for call-backs.)
 async function isLineUser(user) {
   const owner = env("PHONE_OWNER");
-  if (owner) return store.nameKey(owner) === user.username || (await store.phoneUsed(user.id));
+  if (owner && store.nameKey(owner) === user.username) return true;
+  if ((await store.getSetting("phone_user")) === user.id) return true;
   return store.phoneUsed(user.id);
 }
 
@@ -187,6 +188,8 @@ async function tokenFor(user, req, body = {}) {
   const line = await isLineUser(user).catch(() => false);
   if (body.listen && !line) return { status: 200, body: { line: false } };
   if (!body.listen && overLimit(identity, false)) return { status: 429, body: { error: `You've made ${PER_DAY()} phone calls today. Try again tomorrow.` } };
+  // Whoever dials out last is the default person for call-backs from new numbers.
+  if (!body.listen) store.setSetting("phone_user", user.id).catch(() => {});
   try {
     const s = await ready(req);
     return { status: 200, body: { token: accessToken(s, identity, 3600), callerId: s.callerId, maxMinutes: MAX_MINUTES(), line } };
@@ -306,7 +309,8 @@ async function ownerFor(number) {
   if (known) return known;
   const owner = env("PHONE_OWNER");
   const u = owner && (await store.userByName(owner));
-  return u ? u.id : store.phoneUserFor(null, false);
+  if (u) return u.id;
+  return (await store.phoneUserFor(null, false)) || (await store.getSetting("phone_user"));
 }
 
 // Each route: check Twilio really sent it, then answer. Everything Twilio calls lives here.
