@@ -56,7 +56,7 @@
     return "";
   }
 
-  let view = null; // "list" | "thread" | "contact"
+  let view = null; // "list" | "thread" | "contact" | "cell"
   let current = null; // number open in the thread view
   let tab = "calls"; // list tab: "calls" | "contacts"
   let contacts = []; // [{ number, name }], sorted by name
@@ -89,12 +89,12 @@
   }
   window.addEventListener("popstate", () => {
     if (root.hidden) return;
-    if (view === "contact" || view === "thread") { goBack(); history.pushState({ huddlePhone: 1 }, ""); }
+    if (view === "contact" || view === "thread" || view === "cell") { goBack(); history.pushState({ huddlePhone: 1 }, ""); }
     else hide();
   });
   const goBack = () => {
     if (view === "contact" && editBack) editBack();
-    else if (view === "thread" || view === "contact") openList();
+    else if (view === "thread" || view === "contact" || view === "cell") openList();
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
   openBtn.onclick = () => {
@@ -104,6 +104,7 @@
   };
 
   // ---------- The list ----------
+  const $0 = (s) => root.querySelector(s);
   async function openList() {
     view = "list";
     current = null;
@@ -115,6 +116,7 @@
       </header>
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
+        <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
           <input type="tel" inputmode="tel" autocomplete="tel" placeholder="Phone number" aria-label="Phone number" maxlength="22">
@@ -137,6 +139,8 @@
     });
     renderNotify();
     renderCallerId();
+    renderCellRow();
+    $0('[data-act="cell"]').onclick = openCell;
     const $ = (s) => root.querySelector(s);
     $('[data-act="back"]').onclick = goBack;
     const input = $(".ph-new input"), errEl = $(".ph-err");
@@ -250,6 +254,84 @@
     list.querySelectorAll("button[data-call]").forEach((b) => { b.onclick = () => callNumber(b.dataset.call); });
   }
 
+  // ---------- Your cell: link it so calls to it ring here ----------
+  async function renderCellRow() {
+    const row = $0(".ph-cell-row");
+    if (!row) return;
+    let j;
+    try { j = await api("GET", "cell"); } catch { return; }
+    if (!root.contains(row)) return;
+    row.hidden = false;
+    row.querySelector("span").textContent = j.cell ? `Your cell ${pretty(j.cell)} rings here` : "Make Huddle ring when someone calls your cell";
+    row.querySelector("b").textContent = j.cell ? "Setup" : "Link cell";
+  }
+  let cellPoll = null;
+  async function openCell() {
+    view = "cell";
+    clearTimeout(cellPoll);
+    root.innerHTML = `
+      <header class="ch-head">
+        <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
+        <strong>Your cell</strong>
+        <span class="ch-sp"></span>
+      </header>
+      <div class="ch-body ph-cell"><p class="ch-empty">Loading…</p></div>`;
+    $0('[data-act="back"]').onclick = goBack;
+    let j;
+    try { j = await api("GET", "cell"); } catch (e) { $0(".ph-cell").innerHTML = `<p class="ch-empty">${esc(e.message)}</p>`; return; }
+    renderCell(j);
+  }
+  function renderCell(j) {
+    if (view !== "cell") return;
+    clearTimeout(cellPoll);
+    const box = $0(".ph-cell");
+    const hn = (j.huddleNumber || "").replace(/^\+/, ""), hn10 = hn.replace(/^1(?=\d{10}$)/, ""); // Verizon wants 10 digits
+    if (j.cell) {
+      box.innerHTML = `
+        <p class="ph-ok">✓ Your cell <b>${esc(pretty(j.cell))}</b> is linked.</p>
+        <p>Last step: set your cell to forward calls you don't answer to Huddle. Open your phone's dialer, type the code for your carrier, and press call:</p>
+        <ul class="ph-steps">
+          <li><b>AT&amp;T or T-Mobile</b><code>**61*${esc(hn)}#</code></li>
+          <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
+        </ul>
+        <p class="ph-small">To forward every call instead (your cell won't ring at all): <code>**21*${esc(hn)}#</code> on AT&amp;T or T-Mobile, <code>*72${esc(hn10)}</code> on Verizon. To stop forwarding: <code>##61#</code> / <code>##21#</code>, or <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>
+        <p class="ph-small">Your cell can also show as your caller ID when you call from Huddle. Pick it under "Calls show".</p>
+        <button class="btn danger" type="button" data-act="unlink">Unlink this cell</button>`;
+      box.querySelector('[data-act="unlink"]').onclick = async () => {
+        try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked. Remember to turn off forwarding on your phone."); } catch (e) { toast(e.message, 5000); }
+      };
+      return;
+    }
+    if (j.pending && !j.pending.failed) {
+      box.innerHTML = `
+        <p>We're calling <b>${esc(pretty(j.pending.number))}</b> now. Answer it and type this code on the keypad:</p>
+        <p class="ph-code">${esc(j.pending.code)}</p>
+        <p class="ph-small">This page updates by itself when it works.</p>
+        <button class="btn" type="button" data-act="restart">Use a different number</button>`;
+      box.querySelector('[data-act="restart"]').onclick = () => renderCell({ ...j, pending: null });
+      cellPoll = setTimeout(async () => { try { renderCell(await api("GET", "cell")); } catch {} }, 3000);
+      return;
+    }
+    box.innerHTML = `
+      <p>Link your own cell so that when someone calls it and you don't pick up, Huddle rings instead (with a notification if Huddle is closed).</p>
+      <p class="ph-small">First we prove the cell is yours: we call it and you type a code. It's free.</p>
+      ${j.pending && j.pending.failed ? '<p class="ch-err">That didn\'t work. Check the number and try again.</p>' : ""}
+      <form class="ph-contact">
+        <label>Your cell number<input name="number" type="tel" inputmode="tel" maxlength="22" placeholder="(555) 123-4567" value="${esc(j.pending ? pretty(j.pending.number) : "")}" required></label>
+        <p class="ch-err"></p>
+        <button class="btn primary" type="submit">Call me with a code</button>
+      </form>`;
+    const form = box.querySelector("form"), err = form.querySelector(".ch-err");
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const n = normalize(form.number.value);
+      if (!n) { err.textContent = "Type a 10-digit phone number"; return; }
+      form.querySelector("button").disabled = true;
+      try { renderCell(await api("POST", "cell", { number: n })); }
+      catch (x) { err.textContent = x.message; form.querySelector("button").disabled = false; }
+    };
+  }
+
   // ---------- Which number people see when you call ----------
   async function renderCallerId() {
     const box = root.querySelector(".ph-show");
@@ -349,6 +431,7 @@
   }
   window.addEventListener("huddle:phone-live", (e) => {
     const m = e.detail || {};
+    if (m.kind === "cell") { if (view === "cell") openCell(); else if (view === "list") renderCellRow(); toast("Your cell is linked to Huddle"); return; }
     if (view === "list") loadList();
     else if (view === "thread" && m.number === current) loadThread();
     else refreshBadge();

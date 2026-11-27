@@ -118,6 +118,12 @@ With Twilio set up, Huddle has its own phone number for calls (texting is turned
   in the database; skipped while Huddle is open on screen. Works in Chrome/Edge/Firefox and
   installed PWAs; iPhone needs Huddle on the Home Screen (iOS 16.4+). The Android APK (WebView)
   can't get them yet.
+- **Your cell** (Phone screen): anyone can link their own cell. Huddle proves it's theirs first
+  (Twilio calls it and they type a code shown in Huddle; that also makes it a verified caller ID
+  they can show when calling out). Then they forward unanswered calls to the Huddle number
+  (`**61*<number>#` on AT&T/T-Mobile, `*71<number>` on Verizon) and Huddle rings them. Calls are
+  matched by Twilio's `ForwardedFrom`, so one shared number serves everyone at no extra monthly
+  cost. If a carrier doesn't send `ForwardedFrom`, the call falls back to the rule below.
 - Calls from a number go to whoever in Huddle last talked to it; new numbers go to
   `PHONE_OWNER` (a Huddle account name) or else whoever used the phone last.
 

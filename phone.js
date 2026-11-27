@@ -176,6 +176,7 @@ async function isLineUser(user) {
   const owner = env("PHONE_OWNER");
   if (owner && store.nameKey(owner) === user.username) return true;
   if ((await store.getSetting("phone_user")) === user.id) return true;
+  if (await store.cellOf(user.id)) return true;
   return store.phoneUsed(user.id);
 }
 
@@ -211,15 +212,22 @@ async function isOwner(user) {
 let verified = { list: [], at: 0 };
 async function verifiedNumbers() {
   if (Date.now() - verified.at < 5 * 60 * 1000) return verified.list;
-  const j = await twilio("GET", "/OutgoingCallerIds.json?PageSize=20");
+  const j = await twilio("GET", "/OutgoingCallerIds.json?PageSize=1000");
   verified = { list: (j.outgoing_caller_ids || []).map((v) => v.phone_number).filter(Boolean), at: Date.now() };
   return verified.list;
 }
+// Each person can show their own linked cell (proven theirs, and verified in Twilio). The owner
+// can also show verified numbers nobody else has linked (like the cell they verified by hand).
 async function callerOptions(user, s) {
   const opts = [{ number: s.callerId, label: "Huddle number" }];
-  if (!(await isOwner(user))) return { options: opts, canChoose: false };
   try {
-    for (const n of await verifiedNumbers()) if (n !== s.callerId) opts.push({ number: n, label: "Your cell" });
+    const list = await verifiedNumbers();
+    const mine = await store.cellOf(user.id);
+    if (mine && list.includes(mine)) opts.push({ number: mine, label: "Your cell" });
+    if (await isOwner(user)) {
+      const taken = new Set(await store.linkedCells());
+      for (const n of list) if (n !== s.callerId && !taken.has(n) && !opts.some((o) => o.number === n)) opts.push({ number: n, label: "Your cell" });
+    }
   } catch (e) { console.warn("verified numbers:", e.message); }
   return { options: opts, canChoose: opts.length > 1 };
 }
@@ -278,10 +286,72 @@ async function appRoute(method, sub, user, url, body, req) {
     }
     return { status: 200, body: { contacts: await store.contacts(user.id) } };
   }
+  if (sub === "cell") return cellRoute(method, user, body, req);
   if (method === "GET" && sub === "calls") return { status: 200, body: { calls: await store.phoneCalls(user.id) } };
   // The app's phone line is connected and can ring (so a waiting caller can be put through).
   if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
   return { status: 404, body: { error: "Not found" } };
+}
+
+// ---------- Your cell: link it, so calls it forwards to the Huddle number ring you in Huddle ----------
+// First the person proves the cell is theirs: Twilio calls it and they type the code shown in
+// Huddle. That also verifies it in Twilio, so it can be their caller ID. If Twilio already has
+// it verified (someone verified it by hand), Huddle calls it itself with its own code instead.
+const cellChecks = new Map(); // userId -> { number, code, at, tries }
+const CHECK_MS = 5 * 60 * 1000;
+const gatherXml = (s, userId, number, lead) =>
+  `<Gather numDigits="6" timeout="20" action="${xml(`${s.base}/twilio/cell-code?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(number)}`)}"><Say>${xml(lead)}</Say></Gather><Say>${xml("We didn't get a code. Goodbye.")}</Say>`;
+async function cellRoute(method, user, body, req) {
+  let s;
+  try { s = await ready(req); } catch (e) { return fail(e); }
+  if (method === "POST" && body.action === "unlink") {
+    const n = await store.cellOf(user.id);
+    await store.unlinkCell(user.id);
+    if (n && !(await isOwner(user))) {
+      // Take it off the account's verified caller IDs too, so nobody else can show it.
+      twilio("GET", `/OutgoingCallerIds.json?PhoneNumber=${encodeURIComponent(n)}`)
+        .then((j) => Promise.all((j.outgoing_caller_ids || []).filter((v) => v.phone_number === n).map((v) => twilio("DELETE", `/OutgoingCallerIds/${v.sid}.json`))))
+        .then(() => { verified.at = 0; }).catch(() => {});
+    }
+    cellChecks.delete(user.id);
+  } else if (method === "POST") {
+    const number = normalize(body.number);
+    const why = allowed(number);
+    if (why) return { status: 400, body: { error: why } };
+    if (number === s.callerId) return { status: 400, body: { error: "That's the Huddle number. Type your own cell." } };
+    if (overLimit("v:" + user.id, true, 8)) return { status: 429, body: { error: "Too many tries today. Try again tomorrow." } };
+    try {
+      const v = await twilio("POST", "/OutgoingCallerIds.json", {
+        PhoneNumber: number, FriendlyName: `Huddle: ${user.username}`.slice(0, 64),
+        StatusCallback: `${s.base}/twilio/cell-verified?u=${encodeURIComponent(user.id)}&n=${encodeURIComponent(number)}`,
+      });
+      cellChecks.set(user.id, { number, code: String(v.validation_code), at: Date.now(), tries: 0 });
+    } catch (e) {
+      if (e.code !== 21450) return { status: 400, body: { error: e.status === 400 ? "Twilio couldn't call that number" : "Couldn't reach the phone service" } };
+      // Already verified in Twilio: call it ourselves with our own code.
+      const code = String(crypto.randomInt(100000, 1000000));
+      cellChecks.set(user.id, { number, code, at: Date.now(), tries: 0 });
+      try {
+        await twilio("POST", "/Calls.json", { To: number, From: s.callerId, Twiml: `<Response>${gatherXml(s, user.id, number, "Hi, this is Huddle. Type the 6 digit code shown in the app.")}</Response>` });
+      } catch { cellChecks.delete(user.id); return { status: 400, body: { error: "Twilio couldn't call that number" } }; }
+    }
+  }
+  const check = cellChecks.get(user.id);
+  if (check && Date.now() - check.at > CHECK_MS) cellChecks.delete(user.id);
+  const pending = cellChecks.get(user.id);
+  return { status: 200, body: {
+    cell: await store.cellOf(user.id), huddleNumber: s.callerId,
+    pending: pending ? { number: pending.number, code: pending.code, failed: !!pending.failed } : null,
+  } };
+}
+async function cellProven(userId, number) {
+  const check = cellChecks.get(userId);
+  if (!check || check.number !== number || Date.now() - check.at > CHECK_MS) return false;
+  cellChecks.delete(userId);
+  await store.linkCell(userId, number);
+  verified.at = 0;
+  pushTo(userId, { type: "phone-update", kind: "cell" });
+  return true;
 }
 
 // Whose phone line in the app is connected right now.
@@ -294,9 +364,9 @@ function canRing(userId) {
 }
 // "Mom" if this person saved the number as a contact, else "(555) 123-4567".
 const nameOf = async (userId, number) => (await store.contactName(userId, number).catch(() => null)) || pretty(number);
-const ringXml = (s, userId, from, name) => {
+const ringXml = (s, userId, from, name, viaCell) => {
   const after = `${s.base}/twilio/after?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`;
-  return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/>${name ? `<Parameter name="name" value="${xml(name)}"/>` : ""}</Client></Dial>`;
+  return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/>${name ? `<Parameter name="name" value="${xml(name)}"/>` : ""}${viaCell ? '<Parameter name="via" value="cell"/>' : ""}</Client></Dial>`;
 };
 const HOLD_TRIES = 6; // about 20 seconds
 
@@ -353,19 +423,24 @@ const routes = {
   // opens from the notification. Nobody picks up: voicemail.
   async incoming(s, p) {
     const from = normalize(p.From) || String(p.From || "unknown").slice(0, 20);
-    const userId = await ownerFor(from);
+    // Forwarded from someone's linked cell? Then it's their call. (Most carriers say which cell
+    // forwarded it; when they don't, it goes to whoever last talked to the caller.)
+    const fwd = normalize(p.ForwardedFrom);
+    const cellOwner = fwd && fwd !== s.callerId ? await store.cellUser(fwd) : null;
+    const userId = cellOwner || await ownerFor(from);
+    console.log(`Incoming phone call${p.ForwardedFrom ? " (forwarded" + (cellOwner ? " from a linked cell)" : ")") : ""}`);
     if (!userId) return `<Say>${xml("Sorry, nobody can take this call right now.")}</Say><Hangup/>`;
     const name = await store.contactName(userId, from).catch(() => null);
-    notify(userId, { kind: "call", title: name || pretty(from), body: "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
-    if (canRing(userId)) return ringXml(s, userId, from, name);
-    return `<Say>${xml("Please hold while I connect you.")}</Say><Redirect>${xml(`${s.base}/twilio/hold?t=1&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`)}</Redirect>`;
+    notify(userId, { kind: "call", title: name || pretty(from), body: cellOwner ? "Calling your cell" : "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
+    if (canRing(userId)) return ringXml(s, userId, from, name, !!cellOwner);
+    return `<Say>${xml("Please hold while I connect you.")}</Say><Redirect>${xml(`${s.base}/twilio/hold?t=1&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}${cellOwner ? "&c=1" : ""}`)}</Redirect>`;
   },
   // Waiting for Huddle to open (checked every few seconds).
   async hold(s, p, q) {
     const userId = q.get("u"), from = q.get("n"), t = Number(q.get("t")) || 1;
-    if (canRing(userId)) return ringXml(s, userId, from, await store.contactName(userId, from).catch(() => null));
+    if (canRing(userId)) return ringXml(s, userId, from, await store.contactName(userId, from).catch(() => null), q.get("c") === "1");
     if (t >= HOLD_TRIES) return voicemail(s, userId, from);
-    return `<Pause length="3"/><Redirect>${xml(`${s.base}/twilio/hold?t=${t + 1}&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`)}</Redirect>`;
+    return `<Pause length="3"/><Redirect>${xml(`${s.base}/twilio/hold?t=${t + 1}&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}${q.get("c") === "1" ? "&c=1" : ""}`)}</Redirect>`;
   },
   // After ringing in Huddle: answered (save it) or not (voicemail).
   async after(s, p, q) {
@@ -394,6 +469,20 @@ const routes = {
       if (p.RecordingSid) twilio("DELETE", `/Recordings/${p.RecordingSid}.json`).catch(() => {});
     } catch (e) { console.warn("voicemail save failed", e.message); }
     return "";
+  },
+  // Twilio finished checking a cell (its own call with the code typed in).
+  async "cell-verified"(s, p, q) {
+    if (p.VerificationStatus === "success") await cellProven(q.get("u"), q.get("n"));
+    else { const c = cellChecks.get(q.get("u")); if (c && c.number === q.get("n")) c.failed = true; }
+    return "";
+  },
+  // Huddle's own check call: the code they typed.
+  async "cell-code"(s, p, q) {
+    const userId = q.get("u"), number = q.get("n"), check = cellChecks.get(userId);
+    if (!check || check.number !== number) return `<Say>${xml("That code has expired. Start again in Huddle.")}</Say><Hangup/>`;
+    if (String(p.Digits || "") === check.code && await cellProven(userId, number)) return `<Say>${xml("Thanks! Your cell is now linked to Huddle. Goodbye.")}</Say><Hangup/>`;
+    if (++check.tries >= 3) { check.failed = true; return `<Say>${xml("That code didn't match. Start again in Huddle. Goodbye.")}</Say><Hangup/>`; }
+    return gatherXml(s, userId, number, "That code didn't match. Please try again.");
   },
   // Texting is off: anything Twilio still sends here is ignored.
   async sms() { return ""; },
@@ -424,7 +513,7 @@ function webhook(req, res, url) {
       twiml(res, await routes[name](s, params, url.searchParams));
     } catch (e) {
       console.warn("phone webhook failed", name, e.message);
-      twiml(res, name === "sms" || name === "sms-status" || name === "recording" ? "" : "<Say>Sorry, something went wrong.</Say><Hangup/>");
+      twiml(res, ["sms", "sms-status", "recording", "cell-verified"].includes(name) ? "" : "<Say>Sorry, something went wrong.</Say><Hangup/>");
     }
   });
 }

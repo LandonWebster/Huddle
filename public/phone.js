@@ -297,6 +297,8 @@
     try { if (navigator.vibrate) navigator.vibrate([400, 200, 400]); } catch {}
     const saved = c.customParameters && c.customParameters.get && c.customParameters.get("name");
     ring.querySelector("strong").textContent = saved || label(normalize(from) || from);
+    const viaCell = c.customParameters && c.customParameters.get && c.customParameters.get("via") === "cell";
+    ring.querySelector("small").textContent = viaCell ? "is calling your cell" : "is calling your Huddle number";
     ring.hidden = false;
     const gone = () => { if (ringing && ringing.c === c) { ringing = null; ring.hidden = true; } };
     c.on("cancel", gone);

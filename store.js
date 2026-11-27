@@ -119,6 +119,11 @@ CREATE TABLE IF NOT EXISTS phone_contacts (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (user_id, number)
 );
+CREATE TABLE IF NOT EXISTS phone_cells (
+  user_id TEXT PRIMARY KEY,
+  number TEXT NOT NULL,
+  linked_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -552,6 +557,27 @@ async function deleteContact(userId, number) {
   await q("DELETE FROM phone_contacts WHERE user_id = $1 AND number = $2", [userId, number]);
 }
 
+// ---------- Linked cells: a person's own cell, proven theirs, that forwards calls to Huddle ----------
+async function cellOf(userId) {
+  const r = await one("SELECT number FROM phone_cells WHERE user_id = $1", [userId]);
+  return r ? r.number : null;
+}
+async function cellUser(number) {
+  const r = number && await one("SELECT user_id FROM phone_cells WHERE number = $1", [number]);
+  return r ? r.user_id : null;
+}
+async function linkedCells() {
+  return (await q("SELECT number FROM phone_cells", [])).map((r) => r.number);
+}
+// One cell per person and one person per cell: proving a cell again moves it to the new account.
+async function linkCell(userId, number) {
+  await q("DELETE FROM phone_cells WHERE user_id = $1 OR number = $2", [userId, number]);
+  await q("INSERT INTO phone_cells (user_id, number, linked_at) VALUES ($1, $2, $3)", [userId, number, now()]);
+}
+async function unlinkCell(userId) {
+  await q("DELETE FROM phone_cells WHERE user_id = $1", [userId]);
+}
+
 // ---------- Small saved settings, and notification subscriptions ----------
 async function getSetting(key) {
   const r = await one("SELECT value FROM app_settings WHERE key = $1", [key]);
@@ -582,6 +608,7 @@ async function userByName(name) {
 }
 
 module.exports = {
+  cellOf, cellUser, linkedCells, linkCell, unlinkCell,
   contacts, contactName, contactCount, saveContact, deleteContact,
   phoneCalls, getSetting, setSetting, savePushSub, pushSubs, deletePushSub,
   phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName, userById,
