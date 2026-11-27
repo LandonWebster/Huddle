@@ -94,7 +94,7 @@ set `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` in the Render service's Environment. 
 
 Accounts (name + password), a friends list (add by name), and saved one-to-one chats with
 photos, voice notes, hold-to-pin, and a Pinned list in the ☰ menu that jumps back to each
-message. Live while the app is open; no notifications. Data lives in Postgres: set
+message. Live while the app is open, plus notifications when turned on (see below). Data lives in Postgres: set
 `DATABASE_URL` (a free Neon database works). Without it, chats are kept in memory and lost on
 restart. Code: `api.js`, `store.js`, `public/chats.js`.
 
@@ -105,10 +105,16 @@ With Twilio set up, Huddle has its own phone number:
   the phone, and the phone hears everyone: the person who dialed mixes the audio in their browser.
 - **Phone & texts screen** (lobby): text or call any US/Canada number, see missed calls, play
   voicemails. New texts and voicemails show up live with a badge while the app is open.
-- **Call-backs**: calls to the Huddle number ring *on screen only* inside Huddle while it's open
-  (no ring sound, no notification). If nobody answers or the app is closed, callers hear a
-  greeting and can leave a voicemail (up to 2 minutes), which is saved in Huddle and deleted from
-  Twilio.
+- **Call-backs**: calls to the Huddle number ring inside Huddle while it's open. If it's closed,
+  a notification goes out and the caller is held ~20 seconds while Huddle opens. If nobody
+  answers, callers hear a greeting and can leave a voicemail (up to 2 minutes), which is saved in
+  Huddle and deleted from Twilio.
+- **Call log** tab: every incoming, outgoing and missed call and voicemail, with time and length.
+- **Notifications** (turn on in the Phone screen): calls, texts, voicemails and missed calls to
+  the Huddle number, plus chat messages and call invites. Web push with keys made once and saved
+  in the database; skipped while Huddle is open on screen. Works in Chrome/Edge/Firefox and
+  installed PWAs; iPhone needs Huddle on the Home Screen (iOS 16.4+). The Android APK (WebView)
+  can't get them yet.
 - Calls and texts from a number go to whoever in Huddle last talked to it; new numbers go to
   `PHONE_OWNER` (a Huddle account name) or else whoever used the phone last.
 

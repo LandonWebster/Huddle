@@ -1,6 +1,6 @@
 // Chats & friends: accounts, a friends list, and saved one-to-one chats with photos, voice
-// notes and pinned messages. Live updates arrive while the app is open; Huddle never sends
-// notifications.
+// notes and pinned messages. Live updates arrive while the app is open; notifications (if
+// turned on in the Phone screen) cover new messages and call invites when it's closed.
 (() => {
   const root = document.getElementById("chats");
   const openBtn = document.getElementById("chatsOpen");
@@ -907,6 +907,11 @@
       if (await onDone(ids, name) !== false) close();
     };
   }
+  // Open a chat by id (from a notification).
+  window.addEventListener("huddle:open-chat", async (e) => {
+    if (!token) return;
+    try { const c = await refreshChat(e.detail); if (c) { show(); openRoom(c); } } catch {}
+  });
   async function refreshChat(id) {
     const r = await api("/chats");
     chatsCache = r.chats;

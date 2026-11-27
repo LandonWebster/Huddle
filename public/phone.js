@@ -4,8 +4,8 @@
 //    everyone's voices into what the phone hears.
 //  - Call a number from the Phone screen (public/phone-inbox.js) when not in a call.
 //  - Call-backs: when someone calls the Huddle number, it shows up here while Huddle is open.
-// Nothing rings, buzzes or shows outside the app: no ring sound, no notification. If the app
-// is closed, callers get voicemail instead.
+// While Huddle is open, call-backs ring in the app. When it's closed, a notification goes out
+// (public/notifications.js) and the caller is held for a few seconds while Huddle opens.
 (() => {
   "use strict";
   const H = window.huddle;
@@ -56,7 +56,7 @@
     keys.append(k);
   }
 
-  // Someone is calling the Huddle number (shown on screen only, no sound).
+  // Someone is calling the Huddle number (with a ringtone while the app is open).
   const ring = document.createElement("div");
   ring.className = "phone-ring";
   ring.hidden = true;
@@ -206,8 +206,10 @@
         allowIncomingWhileBusy: false,
         getUserMedia: phoneInput,
       });
-      // No sounds from Twilio at all: no ringtone, no beeps.
-      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(false); } catch {}
+      // A ringtone for call-backs; no extra beeps when calling out or hanging up.
+      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(true); } catch {}
+      // Tell the server the line is connected, so a caller waiting on hold gets put through.
+      d.on("registered", sayReady);
       d.on("tokenWillExpire", () => getToken(true).then((x) => x.token && d.updateToken(x.token)).catch(() => {}));
       d.on("error", (e) => console.warn("phone", e && e.message));
       d.on("incoming", onIncoming);
@@ -217,6 +219,13 @@
     })().finally(() => { deviceReady = null; });
     return deviceReady;
   }
+  function sayReady() {
+    const tk = signedIn();
+    if (!tk || !device || device.state !== "registered") return;
+    fetch("/api/phone/ready", { method: "POST", headers: { authorization: "Bearer " + tk } }).catch(() => {});
+  }
+  // The app's live connection came back (it was asleep or offline): say the line is ready again.
+  window.addEventListener("huddle:signed-in", () => { if (device) sayReady(); else listen(); });
   // When the app opens (signed in, phone set up): get ready for call-backs.
   let listenTries = 0;
   function listen() {
@@ -226,7 +235,7 @@
   }
   window.addEventListener("huddle:phone-live", () => { listenTries = 0; listen(); });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) listen(); });
-  setTimeout(listen, 4000);
+  setTimeout(listen, 1200);
 
   // ---------- Calls ----------
   function setLive(text) {
@@ -282,6 +291,7 @@
     if (call || ringing) { try { c.reject(); } catch {} return; }
     const from = (c.customParameters && c.customParameters.get && c.customParameters.get("from")) || (c.parameters && c.parameters.From) || "";
     ringing = { c, from };
+    try { if (navigator.vibrate) navigator.vibrate([400, 200, 400]); } catch {}
     ring.querySelector("strong").textContent = pretty(normalize(from) || from);
     ring.hidden = false;
     const gone = () => { if (ringing && ringing.c === c) { ringing = null; ring.hidden = true; } };
