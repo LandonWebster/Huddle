@@ -125,6 +125,10 @@
   const cleanCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
   const myName = () => els.nameInput.value.trim() || "Guest";
   const track = (kind) => local.stream.getTracks().find((t) => t.kind === kind) || null;
+  // What we send to others. Normally the mic, but while a phone number is on the call
+  // (public/phone.js) it's the mic mixed with the phone's voice.
+  let sendAudio = null;
+  const sendTrack = (kind) => (kind === "audio" && sendAudio) || track(kind);
 
   // ---------- What you hear ----------
   // Silent mode and volume only change what YOU hear. Your mic is separate.
@@ -313,8 +317,9 @@
     for (const p of peers.values()) {
       if (!p.pc) continue;
       const t = transceiverFor(p.pc, kind);
-      if (t) t.sender.replaceTrack(newTrack).catch(() => {});
+      if (t) t.sender.replaceTrack(kind === "audio" && sendAudio ? sendAudio : newTrack).catch(() => {});
     }
+    if (kind === "audio") window.dispatchEvent(new Event("huddle:mic-track"));
     refreshLocalVideo();
   }
 
@@ -579,7 +584,7 @@
     setTimeout(tryReconnect, Math.min(10000, 1000 * 2 ** reconnect.tries));
   }
 
-  const myState = () => ({ mic: local.micOn, cam: local.camOn, ...myLook() });
+  const myState = () => ({ mic: local.micOn, cam: local.camOn, ...myLook(), ...(local.phone ? { phone: local.phone } : {}) });
   function sendState() {
     if (ws && ws.readyState === 1 && room) ws.send(JSON.stringify({ type: "state", state: myState() }));
   }
@@ -714,7 +719,7 @@
       // Always create both an audio and a video slot so turning the camera/mic on later
       // just swaps the track in, with no renegotiation.
       for (const kind of ["audio", "video"]) {
-        const t = track(kind);
+        const t = sendTrack(kind);
         pc.addTransceiver(t || kind, { direction: "sendrecv", streams: [local.stream] });
       }
       makeOffer(p, false);
@@ -741,7 +746,7 @@
           for (const t of pc.getTransceivers()) {
             t.direction = "sendrecv";
             const kind = t.receiver.track.kind;
-            const lt = track(kind);
+            const lt = sendTrack(kind);
             if (lt && t.sender.track !== lt) await t.sender.replaceTrack(lt);
             try { t.sender.setStreams && t.sender.setStreams(local.stream); } catch {}
           }
@@ -844,6 +849,18 @@
     p.tile.el.classList.toggle("cam-off", !p.state.cam || !!st.video);
     paintAvatar(p.tile.avatar, p.state, p.tile.name);
     p.tile.el.classList.toggle("mic-muted", !p.state.mic);
+    renderPhoneTag(p.tile, p.state.phone);
+  }
+  // "+ phone ••• 1234" on the tile of whoever added a phone number to the call.
+  function renderPhoneTag(tile, last4) {
+    let tag = tile.el.querySelector(".phone-tag");
+    if (!last4) { if (tag) tag.remove(); return; }
+    if (!tag) {
+      tag = document.createElement("span");
+      tag.className = "phone-tag";
+      tile.el.querySelector(".label").append(tag);
+    }
+    tag.textContent = `+ phone ••• ${last4}`;
   }
 
   function layoutGrid() {
@@ -925,6 +942,7 @@
     const self = { id: "self", name: myName(), tile: makeTile(myName(), true), pc: null };
     peers.set("self", self);
     renderSelfView();
+    renderPhoneTag(self.tile, local.phone);
     refreshLocalVideo();
     const at = track("audio");
     if (at) watchSpeaking(new MediaStream([at]), self.tile.el);
@@ -952,7 +970,7 @@
     history.replaceState(null, "", "/");
     // Leaving turns the camera and mic off (their lights go out), unless the app is rejoining.
     if (!keepService) stopMedia(); else refreshLocalVideo();
-    window.dispatchEvent(new Event("huddle:left"));
+    window.dispatchEvent(new CustomEvent("huddle:left", { detail: { rejoining: !!keepService } }));
     setTimeout(checkVersion, 500);
   }
 
@@ -1536,6 +1554,25 @@
     },
     get gameOpen() { return currentPanel === "game"; },
     joinRoom: (code) => joinRoom(code),
+    // For calling real phone numbers (public/phone.js).
+    get config() { return config; },
+    micTrack: () => track("audio"),
+    get micOn() { return local.micOn; },
+    get audioCtx() { return audioCtx; },
+    setSendAudio(t) {
+      sendAudio = t || null;
+      for (const p of peers.values()) {
+        if (!p.pc) continue;
+        const tr = transceiverFor(p.pc, "audio");
+        if (tr) tr.sender.replaceTrack(sendTrack("audio")).catch(() => {});
+      }
+    },
+    setPhoneGuest(last4) {
+      local.phone = last4 || null;
+      sendState();
+      const self = peers.get("self");
+      if (self) renderPhoneTag(self.tile, local.phone);
+    },
     sendSettings(st) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "settings", ...st })); },
     // How loud Pip should be: follows the app's volume and Silent mode.
     get volume() { return sound.silent ? 0 : sound.master; },
