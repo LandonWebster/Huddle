@@ -1013,7 +1013,7 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .ph-notify { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; padding: 10px 12px; border-radius: 14px; background: var(--c-panel); border: 1px solid var(--c-line); font-size: 13px; color: var(--muted); }
 .ph-notify span { flex: 1; }
 .ph-notify .btn { flex: none; padding: 8px 12px; }
-.ph-log-head { margin: 14px 2px 6px; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+
 .ph-call-row { display: flex; align-items: center; }
 .ph-call-row > button:first-child { flex: 1; min-width: 0; width: auto; }
 .ch-list .ph-call-row > .ph-callback { width: 44px; height: 44px; flex: none; padding: 0; justify-content: center; }
@@ -1023,3 +1023,18 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .ph-callback { color: #22d3ee; }
 .ph-show { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 13px; color: var(--muted); }
 .ph-show select { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--c-line); background: var(--c-panel); color: var(--text); font: inherit; font-size: 15px; }
+
+/* Phone contacts */
+.ph-tabs { margin: 14px 0 4px; }
+.ph-who { display: flex; flex-direction: column; min-width: 0; }
+.ph-who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-who small { color: var(--muted); font-size: 12px; }
+.ph-save { color: #22d3ee; }
+.ph-save svg, .ph-add-row svg { width: 20px; height: 20px; }
+.ph-add-row strong { color: #22d3ee; }
+.ph-contact { display: flex; flex-direction: column; gap: 12px; padding: 8px 2px; }
+.ph-contact label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.ph-contact input { font: inherit; font-size: 16px; color: var(--text); background: var(--panel-2); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 12px 14px; }
+.ph-contact input:focus { outline: none; border-color: #2b59ff; }
+.ph-contact .btn { width: 100%; justify-content: center; }
+.ph-contact .ch-err:empty { display: none; }

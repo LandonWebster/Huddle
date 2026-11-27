@@ -110,6 +110,9 @@ With Twilio set up, Huddle has its own phone number for calls (texting is turned
   answers, callers hear a greeting and can leave a voicemail (up to 2 minutes), which is saved in
   Huddle and deleted from Twilio.
 - **Call log**: every incoming, outgoing and missed call and voicemail, with time and length.
+- **Contacts** tab: save a name to a number (add, edit, delete, tap to call), saved to your
+  account. Names show in the call log, the ringing bar, voicemails and notifications. Save any
+  number from its history screen (person button at the top).
 - **Notifications** (turn on in the Phone screen): calls, voicemails and missed calls to the
   Huddle number, plus chat messages and call invites. Web push with keys made once and saved
   in the database; skipped while Huddle is open on screen. Works in Chrome/Edge/Firefox and

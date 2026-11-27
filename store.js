@@ -112,6 +112,13 @@ CREATE TABLE IF NOT EXISTS phone_log (
   read_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS phone_log_user ON phone_log (user_id, number, created_at);
+CREATE TABLE IF NOT EXISTS phone_contacts (
+  user_id TEXT NOT NULL,
+  number TEXT NOT NULL,
+  name TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, number)
+);
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -523,6 +530,28 @@ async function phoneCalls(userId, limit = 200) {
   return rows.map(phoneOut);
 }
 
+// ---------- Phone contacts: a name saved to a phone number, per account ----------
+async function contacts(userId) {
+  const rows = await q("SELECT number, name FROM phone_contacts WHERE user_id = $1", [userId]);
+  return rows.map((r) => ({ number: r.number, name: r.name })).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+async function contactName(userId, number) {
+  if (!userId || !number) return null;
+  const r = await one("SELECT name FROM phone_contacts WHERE user_id = $1 AND number = $2", [userId, number]);
+  return r ? r.name : null;
+}
+async function contactCount(userId) {
+  const r = await one("SELECT COUNT(*) AS n FROM phone_contacts WHERE user_id = $1", [userId]);
+  return Number((r && r.n) || 0);
+}
+async function saveContact(userId, number, name) {
+  await q("DELETE FROM phone_contacts WHERE user_id = $1 AND number = $2", [userId, number]);
+  await q("INSERT INTO phone_contacts (user_id, number, name, created_at) VALUES ($1, $2, $3, $4)", [userId, number, name, now()]);
+}
+async function deleteContact(userId, number) {
+  await q("DELETE FROM phone_contacts WHERE user_id = $1 AND number = $2", [userId, number]);
+}
+
 // ---------- Small saved settings, and notification subscriptions ----------
 async function getSetting(key) {
   const r = await one("SELECT value FROM app_settings WHERE key = $1", [key]);
@@ -553,6 +582,7 @@ async function userByName(name) {
 }
 
 module.exports = {
+  contacts, contactName, contactCount, saveContact, deleteContact,
   phoneCalls, getSetting, setSetting, savePushSub, pushSubs, deletePushSub,
   phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName, userById,
   tidyName, nameKey,
