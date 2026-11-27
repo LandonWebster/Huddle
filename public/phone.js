@@ -319,7 +319,18 @@
     c.on("cancel", gone);
     c.on("disconnect", gone);
     c.on("reject", gone);
+    maybeAutoAnswer();
   }
+  // Opened by tapping Answer on a ringing notification: answer this caller without another tap.
+  function maybeAutoAnswer() {
+    const a = window.huddleAutoAnswer;
+    if (!a || !ringing || Date.now() > a.until) return;
+    const want = normalize(a.from) || a.from, got = normalize(ringing.from) || ringing.from;
+    if (want !== got) return;
+    window.huddleAutoAnswer = null;
+    ring.querySelector('[data-act="answer"]').click();
+  }
+  window.addEventListener("huddle:auto-answer", maybeAutoAnswer);
   ring.addEventListener("click", (e) => {
     const act = e.target.closest("[data-act]");
     if (!act || !ringing) return;

@@ -75,9 +75,17 @@
   window.addEventListener("huddle:signed-in", resync, { once: true });
 
   // ---------- Opening the right place from a notification ----------
+  // "Answer" on a ringing call notification: pick up that call as soon as it reaches the app.
+  function autoAnswer(u) {
+    const phone = u.searchParams.get("phone");
+    if (!phone || u.searchParams.get("answer") !== "1") return;
+    window.huddleAutoAnswer = { from: phone, until: Date.now() + 40000 };
+    window.dispatchEvent(new Event("huddle:auto-answer"));
+  }
   function open(url) {
     let u;
     try { u = new URL(url, location.origin); } catch { return; }
+    autoAnswer(u);
     const room = u.pathname.match(/^\/r\/([A-Za-z0-9]+)/);
     if (room && !H().inCall && H().joinRoom) { H().joinRoom(room[1].toUpperCase()); return; }
     const chat = u.searchParams.get("chat");
@@ -92,6 +100,7 @@
   const q = new URLSearchParams(location.search);
   if (q.has("chat") || q.has("phone")) {
     const url = location.href;
+    autoAnswer(new URL(url));
     history.replaceState(history.state, "", location.pathname);
     setTimeout(() => open(url), 1500);
   }
