@@ -13,7 +13,8 @@
 //     Huddle call hears the phone, and the phone hears everyone.
 //
 // Optional settings:
-//  TWILIO_PHONE_NUMBER    the caller ID to show (default: the first number in the account)
+//  TWILIO_PHONE_NUMBER    the caller ID to show (default: the first number in the account, or
+//                         if there is none, the first verified caller ID)
 //  PHONE_ALLOW_PREFIXES   comma list of allowed number starts (default "+1": US and Canada)
 //  PHONE_MAX_MINUTES      longest phone call, in minutes (default 30)
 //  PHONE_CALLS_PER_DAY    calls each person can make per day (default 20)
@@ -72,8 +73,15 @@ async function doSetup(base) {
   if (!callerId) {
     const nums = await twilio("GET", "/IncomingPhoneNumbers.json?PageSize=20");
     const n = (nums.incoming_phone_numbers || []).find((x) => x.capabilities && x.capabilities.voice !== false);
-    if (!n) throw Object.assign(new Error("no_number"), { friendly: "The Twilio account needs a phone number first" });
-    callerId = n.phone_number;
+    if (n) callerId = n.phone_number;
+  }
+  if (!callerId) {
+    // No number bought yet (Twilio's free trial doesn't give one): show a verified caller ID
+    // instead, like the phone number used to sign up for Twilio.
+    const ids = await twilio("GET", "/OutgoingCallerIds.json?PageSize=20");
+    const v = (ids.outgoing_caller_ids || [])[0];
+    if (!v) throw Object.assign(new Error("no_number"), { friendly: "The Twilio account needs a phone number or a verified caller ID first" });
+    callerId = v.phone_number;
   }
   // The TwiML app points Twilio back at /twilio/voice. Reuse ours if it's already there.
   const apps = await twilio("GET", `/Applications.json?FriendlyName=${encodeURIComponent(APP_NAME)}`);
