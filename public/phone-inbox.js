@@ -116,7 +116,6 @@
       </header>
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
-        <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
         <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
@@ -131,6 +130,7 @@
           <button type="button" role="tab" data-tab="contacts" class="${tab === "contacts" ? "on" : ""}">Contacts</button>
         </div>
         <ul class="ch-list ph-list"><li class="ch-empty">Loading…</li></ul>
+        <button type="button" class="ph-cell-row ph-sos-row ph-sos-bottom" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
       </div>`;
     root.querySelectorAll("[data-tab]").forEach((b) => {
       b.onclick = () => {

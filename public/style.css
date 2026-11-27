@@ -1083,3 +1083,4 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 /* Ring time before forwarding */
 .ph-ring { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
 .ph-ring select { font: inherit; font-size: 15px; color: var(--text); background: var(--panel-2); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; padding: 8px 10px; }
+.ph-sos-bottom { margin-top: 18px; }
