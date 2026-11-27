@@ -15,6 +15,11 @@
       <div class="home-pip"></div>
       <button type="button" class="btn primary home-start">Start a huddle</button>
     </section>
+    <section class="home-notify" hidden>
+      <span><b>Let Huddle ring</b><small>Turn on notifications so calls, alarms and messages reach you even when Huddle is closed.</small></span>
+      <button type="button" class="btn primary">Turn on</button>
+      <button type="button" class="ch-icon home-notify-x" aria-label="Not now">✕</button>
+    </section>
     <section class="home-tiles" aria-label="Today">
       <button type="button" class="home-tile" data-go="phone"><span class="ht-ic">${icon("phone")}</span><b data-v="phone">0</b><small>New voicemails &amp; missed calls</small></button>
       <button type="button" class="home-tile" data-go="alarms"><span class="ht-ic">${icon("alarm")}</span><b data-v="alarm">None</b><small>Next alarm</small></button>
@@ -80,8 +85,27 @@
     for (const b of box.querySelectorAll(".home-friend")) b.onclick = () => T.select("contacts");
   }
 
+  // Notifications are off on this device: offer to turn them on (until "Not now").
+  async function renderNotify() {
+    const box = p.body.querySelector(".home-notify");
+    let st = "on";
+    try { st = window.huddleNotify ? await window.huddleNotify.state() : "on"; } catch {}
+    let dismissed = false;
+    try { dismissed = localStorage.getItem("huddle:notifyAsked") === "1"; } catch {}
+    box.hidden = dismissed || !(st === "off" || st === "ios-home");
+    const b = box.querySelector(".btn");
+    b.hidden = st !== "off";
+    if (st === "ios-home") box.querySelector("small").textContent = window.huddleNotify.HELP["ios-home"];
+    b.onclick = async () => {
+      try { await window.huddleNotify.enable(); box.hidden = true; if (H().toast) H().toast("Notifications on"); }
+      catch (e) { if (H().toast) H().toast(e.message, 7000); }
+    };
+    box.querySelector(".home-notify-x").onclick = () => { box.hidden = true; try { localStorage.setItem("huddle:notifyAsked", "1"); } catch {} };
+  }
+
   let timer = null;
   p.onShow = () => {
+    renderNotify();
     renderTiles();
     loadFriends();
     if (window.HuddleFeeds) window.HuddleFeeds.home();

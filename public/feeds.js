@@ -268,9 +268,80 @@
       x.send(blob);
     });
   }
+  // Videos are made smaller before they're posted (about 720p, a few MB a minute), so the free
+  // storage holds many more. The phone plays the video once, quietly, and records a smaller copy;
+  // it takes as long as the video. Already-small videos, and browsers that can't, post as they are.
+  const MAX_VIDEO_SECONDS = 60;
+  const VIDEO_BITRATE = 1800000;
+  function recorderType() {
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
+    // H.264 MP4 only, so every phone (iPhone too) can play the smaller copy.
+    for (const t of ["video/mp4;codecs=avc1.42E01F,mp4a.40.2", "video/mp4;codecs=avc1,mp4a.40.2", "video/mp4;codecs=avc1", "video/mp4;codecs=avc1.42E01E"]) {
+      try { if (MediaRecorder.isTypeSupported(t)) return t; } catch {}
+    }
+    return null;
+  }
+  // Made inside the tap (so the video may play with sound): { run(onProgress) -> Blob or null, cancel() }.
+  function shrinkVideo(file) {
+    let go, onProgress = null;
+    const gate = new Promise((r) => { go = r; });
+    const type = recorderType();
+    const canvas = document.createElement("canvas");
+    if (!type || !canvas.captureStream) return null;
+    const v = document.createElement("video");
+    v.playsInline = true; v.preload = "auto"; v.src = URL.createObjectURL(file);
+    let ctx = null, dest = null;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      dest = ctx.createMediaStreamDestination();
+      ctx.createMediaElementSource(v).connect(dest); // to the recording only, not the speakers
+    } catch { ctx = null; dest = null; v.muted = true; }
+    const started = v.play();
+    const job = (async () => {
+      const cleanup = () => { try { v.pause(); } catch {} URL.revokeObjectURL(v.src); if (ctx) ctx.close().catch(() => {}); };
+      try {
+        await started;
+        v.pause();
+        if (!(await gate)) { cleanup(); return null; }
+        if (!v.videoWidth) await new Promise((r) => { v.onloadedmetadata = r; setTimeout(r, 4000); });
+        const w0 = v.videoWidth, h0 = v.videoHeight, dur = v.duration;
+        if (!w0 || !h0 || !isFinite(dur)) { cleanup(); return null; }
+        const k = Math.min(1, 720 / Math.min(w0, h0), 1280 / Math.max(w0, h0));
+        canvas.width = Math.round(w0 * k / 2) * 2; canvas.height = Math.round(h0 * k / 2) * 2;
+        const g = canvas.getContext("2d");
+        const stream = canvas.captureStream(30);
+        if (dest) for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
+        const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: VIDEO_BITRATE, audioBitsPerSecond: 96000 });
+        const chunks = [];
+        rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        const done = new Promise((r) => { rec.onstop = r; });
+        v.currentTime = 0;
+        await new Promise((r) => { v.onseeked = r; setTimeout(r, 1500); });
+        let alive = true;
+        const draw = () => {
+          if (!alive) return;
+          g.drawImage(v, 0, 0, canvas.width, canvas.height);
+          if (onProgress && dur) onProgress(Math.min(1, v.currentTime / dur));
+          if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+        };
+        draw();
+        rec.start(1000);
+        await v.play();
+        await new Promise((r) => { v.onended = r; v.onerror = r; });
+        alive = false;
+        rec.stop();
+        await done;
+        cleanup();
+        const out = new Blob(chunks, { type: type.split(";")[0] });
+        return out.size > 1000 ? out : null;
+      } catch { cleanup(); return null; }
+    })();
+    return { run: (p) => { onProgress = p; go(true); return job; }, cancel: () => go(false) };
+  }
+
   function compose(kind, file) {
     const isVideo = kind === "video";
-    if (isVideo && file.size > 100 * 1024 * 1024) { toast("That video is too big (100 MB at most). Try a shorter one."); return; }
+    if (isVideo && file.size > 300 * 1024 * 1024) { toast("That video is too big. Try a shorter one."); return; }
     const wrap = document.createElement("div");
     wrap.className = "sheet-backdrop fd-compose-wrap";
     const preview = URL.createObjectURL(file);
@@ -297,12 +368,22 @@
     postBtn.onclick = async () => {
       if (busy) return;
       busy = true; postBtn.disabled = true; err.textContent = ""; bar.hidden = false; fill.style.width = "3%";
+      const job = isVideo && file.size > 4 * 1024 * 1024 ? shrinkVideo(file) : null;
       try {
         const q = new URLSearchParams({ kind, caption: wrap.querySelector("textarea").value.trim() });
         let body, type;
         if (isVideo) {
+          // Small enough already (under about 2.5 Mbps)? Post it as it is.
           const info = await videoInfo(file);
-          if (info.duration && info.duration > 185) throw new Error("Videos can be up to 3 minutes long.");
+          if (info.duration && info.duration > MAX_VIDEO_SECONDS + 1) throw new Error(`Videos can be up to ${MAX_VIDEO_SECONDS} seconds long. Trim it and try again.`);
+          const small = info.duration && file.size * 8 / info.duration < 2500000 && file.size < 20 * 1024 * 1024;
+          let shrunk = null;
+          if (job && small) job.cancel();
+          else if (job) {
+            err.textContent = "Making your video smaller… keep Huddle open.";
+            shrunk = await job.run((f) => { fill.style.width = Math.max(3, Math.round(f * 100)) + "%"; });
+            err.textContent = ""; fill.style.width = "3%";
+          }
           if (info.w) q.set("w", info.w); if (info.h) q.set("h", info.h); if (info.duration) q.set("duration", info.duration.toFixed(1));
           if (info.thumb) {
             try {
@@ -310,7 +391,9 @@
               const j = await r.json(); if (r.ok && j.id) q.set("thumb", j.id);
             } catch {}
           }
-          body = file; type = file.type || "video/mp4";
+          if (shrunk && shrunk.size < file.size) { body = shrunk; type = shrunk.type; }
+          else if (file.size > 100 * 1024 * 1024) throw new Error("That video is too big to post (100 MB at most). Try a shorter one.");
+          else { body = file; type = file.type || "video/mp4"; }
         } else {
           const s = await shrinkPhoto(file);
           if (s.w) q.set("w", s.w); if (s.h) q.set("h", s.h);
@@ -323,6 +406,7 @@
         pg.prepend(r.post);
         T.select(isVideo ? "video" : "photos");
       } catch (ex) {
+        if (job) job.cancel();
         busy = false; postBtn.disabled = false; bar.hidden = true; err.textContent = ex.message;
       }
     };

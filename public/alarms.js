@@ -1,6 +1,7 @@
-// The Alarms tab: alarms, a timer and a stopwatch. Everything is saved on this device only.
-// Alarms ring while Huddle is open (on a phone, keep the app open or in the background).
-// When one rings, Pip can say good morning.
+// The Alarms tab: alarms, a timer and a stopwatch. When one rings, Pip can say good morning.
+// Alarms (and a running timer) are saved with your account too, so they ring even when Huddle
+// is closed: the server sends a ringing notification (alarm-server.js), and the Android app
+// sets real phone alarms (native AlarmScheduler). Open and on screen, Huddle rings by itself.
 (() => {
   "use strict";
   const T = window.HuddleTabs;
@@ -8,8 +9,69 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const KEY = "huddle:alarms";
   const load = () => { try { const a = JSON.parse(localStorage.getItem(KEY) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(alarms)); } catch {} window.dispatchEvent(new Event("huddle:alarms")); };
+  const save = (fromServer) => {
+    try { localStorage.setItem(KEY, JSON.stringify(alarms)); } catch {}
+    window.dispatchEvent(new Event("huddle:alarms"));
+    if (!fromServer) upload();
+    setNative();
+  };
   let alarms = load(); // [{ id, h, m, days: [0..6], label, on, pip }]
+
+  // ---------- Saved with the account, and as phone alarms in the Android app ----------
+  const H = () => window.huddle || {};
+  const token = () => { try { return localStorage.getItem("huddle:token"); } catch { return null; } };
+  const tz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; } };
+  const pref = (k) => !window.HuddlePrefs || window.HuddlePrefs.get(k);
+  async function call(method, body) {
+    const r = await fetch("/api/alarms", {
+      method,
+      headers: { authorization: "Bearer " + (token() || ""), ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) throw new Error("alarms " + r.status);
+    return r.json();
+  }
+  let upTimer = null;
+  function upload(extra) {
+    if (!token()) return;
+    clearTimeout(upTimer);
+    upTimer = setTimeout(() => call("POST", { alarms, tz: tz(), ...(extra || {}) }).catch(() => {}), extra ? 0 : 400);
+  }
+  // Server's copy wins (it turns one-time alarms off after they ring); a first sign-in on a
+  // device that already had alarms sends them up.
+  async function download() {
+    if (!token()) return;
+    try {
+      const r = await call("GET");
+      if (Array.isArray(r.alarms)) { alarms = r.alarms; save(true); if (typeof renderAlarms === "function" && mode === "alarm" && !p.el.hidden) renderAlarms(); }
+      else if (alarms.length) upload();
+      else call("POST", { alarms: [], tz: tz() }).catch(() => {});
+    } catch {}
+  }
+  // The Android app rings alarms itself (a real alarm, with Huddle closed or the phone restarted).
+  let nativeRings = false;
+  function setNative() {
+    if (!H().isNativeApp || !H().native) return;
+    const on = pref("alarms");
+    H().native("setAlarms", {
+      alarms: on ? alarms : [],
+      timer: on && timer.running ? timer.endAt : 0,
+      name: myFirstName(),
+      sound: pref("sounds"), vibrate: pref("vibrate"),
+    }).then(() => { nativeRings = true; }).catch(() => { nativeRings = false; });
+  }
+  window.addEventListener("huddle:signedin", download);
+  window.addEventListener("huddle:signed-in", download);
+  window.addEventListener("huddle:alarms-changed", download);
+  window.addEventListener("huddle:prefs", () => setNative());
+  // Ring here, or leave it to the notification / phone alarm? Here only when Huddle is on screen
+  // (the notification is skipped then) or nothing else can ring.
+  async function ringsHere() {
+    if (!pref("alarms")) return false;
+    if (nativeRings) return false;
+    if (!document.hidden) return true;
+    try { return !window.huddleNotify || (await window.huddleNotify.state()) !== "on"; } catch { return true; }
+  }
   const DAY = ["S", "M", "T", "W", "T", "F", "S"];
   const DAY_LONG = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const pad = (n) => String(n).padStart(2, "0");
@@ -89,7 +151,7 @@
           <button type="button" class="sw al-sw" role="switch" aria-checked="${a.on}" aria-label="${esc(fmt(a.h, a.m))} alarm on or off" data-id="${esc(a.id)}"><span class="track"></span></button>
         </li>`).join("")}</ul>
       ${alarms.length ? "" : '<p class="tp-empty">No alarms yet.</p>'}
-      <p class="al-note">Alarms ring while Huddle is open on this device. They're saved on this device only.</p>`;
+      <p class="al-note">${H().isNativeApp ? "Alarms ring even when Huddle is closed." : "Alarms ring even when Huddle is closed, once notifications are on (Account, Settings)."}</p>`;
     const pf = view.querySelector(".al-pip");
     if (pf && window.Pip) pf.appendChild(window.Pip.face(48));
     for (const b of view.querySelectorAll(".al-open")) b.onclick = () => edit(alarms.find((a) => a.id === b.dataset.id));
@@ -171,13 +233,13 @@
     document.body.appendChild(el);
     if (window.Pip) el.querySelector(".al-ring-pip").appendChild(window.Pip.face(110));
     let ctx = null, loop = null;
-    try {
+    if (pref("sounds")) try {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (ctx.state === "suspended") ctx.resume().catch(() => {});
       chime(ctx);
       loop = setInterval(() => chime(ctx), 2000);
     } catch {}
-    try { navigator.vibrate && navigator.vibrate([400, 200, 400, 200, 400]); } catch {}
+    if (pref("vibrate")) try { navigator.vibrate && navigator.vibrate([400, 200, 400, 200, 400]); } catch {}
     if (pip && window.Pip && window.Pip.speak) setTimeout(() => { try { window.Pip.speak(pip); } catch {} }, 1500);
     const stop = () => {
       clearInterval(loop);
@@ -201,7 +263,8 @@
     const u = (window.HuddleAccount && window.HuddleAccount.user) || {};
     return u.display ? u.display.split(" ")[0] : "";
   }
-  function fire(a) {
+  async function fire(a) {
+    if (!(await ringsHere())) return;
     const n = myFirstName();
     ring({
       title: fmt(a.h, a.m),
@@ -249,17 +312,21 @@
     const setMin = (m) => { if (timer.running) return; timer.total = timer.left = Math.min(600, Math.max(1, m)) * 60000; renderTimer(); };
     for (const b of view.querySelectorAll("[data-min]")) b.onclick = () => setMin(Number(b.dataset.min));
     view.querySelector(".al-custom input").onchange = (e) => setMin(Number(e.target.value) || 1);
-    view.querySelector('[data-act="reset"]').onclick = () => { timer.running = false; timer.left = timer.total; renderTimer(); };
+    view.querySelector('[data-act="reset"]').onclick = () => { timer.running = false; timer.left = timer.total; timerChanged(); renderTimer(); };
     view.querySelector('[data-act="go"]').onclick = () => {
       if (timer.running) { timer.left = timer.endAt - Date.now(); timer.running = false; }
       else { if (timer.left <= 0) timer.left = timer.total; timer.endAt = Date.now() + timer.left; timer.running = true; }
+      timerChanged();
       renderTimer();
     };
   }
+  // A running timer rings with Huddle closed too.
+  function timerChanged() { upload({ timer: timer.running ? { at: timer.endAt } : null }); setNative(); }
   function timerTick() {
     if (timer.running && Date.now() >= timer.endAt) {
       timer.running = false; timer.left = timer.total;
-      ring({ title: "Time's up", sub: "Timer · " + clock(timer.total), pip: "Your timer is done." });
+      ringsHere().then((yes) => { if (yes) ring({ title: "Time's up", sub: "Timer · " + clock(timer.total), pip: "Your timer is done." }); });
+      upload({ timer: null }); setNative();
       if (mode === "timer" && !p.el.hidden) renderTimer();
       return;
     }

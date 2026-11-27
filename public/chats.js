@@ -93,9 +93,16 @@
     if (m.type === "phone-update") { window.dispatchEvent(new CustomEvent("huddle:phone-live", { detail: m })); return; }
     if (m.type === "presence") { updatePresence(m); return; }
     if (m.type === "call-invite") { showInvite(m); return; }
+    if (m.type === "alarms-changed") { window.dispatchEvent(new Event("huddle:alarms-changed")); return; }
     if (m.type === "auth-failed") { signedOut(); return; }
     if (m.type === "chats-changed") { if (view === "list") loadList(); else refreshBadge(); loadLobbyFriends(); return; }
     if (m.type === "chat-message") {
+      if (me && m.message && m.message.sender !== me.id && m.from) {
+        const msg = m.message;
+        nativeNote({ channel: "messages", chat: true, title: m.group ? `${m.from} in ${m.group}` : m.from,
+          body: msg.kind === "image" ? "Sent a photo" : msg.kind === "voice" ? "Sent a voice note" : String(msg.body || "").slice(0, 140),
+          tag: "chat-" + m.chatId, url: "/?chat=" + encodeURIComponent(m.chatId) });
+      }
       if (view === "room" && room && room.id === m.chatId) { addMessages([m.message], true); markRead(); }
       else if (view === "list") loadList();
       else refreshBadge();
@@ -469,6 +476,7 @@
   function openAccountMenu() {
     sheet(`<p class="ch-sheet-title">Signed in as <b>${esc(me ? me.display : "")}</b></p>`, [
       { label: "👤 Edit my profile", run: editProfile },
+      { label: "⚙️ Settings", run: () => window.HuddlePrefs && window.HuddlePrefs.open() },
       { label: "🚫 Blocked people", run: openBlocked },
       { label: "Sign out", danger: true, run: async () => { try { await api("/logout", { method: "POST" }); } catch {} signedOut(); } },
     ]);
@@ -1052,7 +1060,12 @@
       <button type="button" class="ic-no">Not now</button>
       <button type="button" class="ic-yes">Join</button>`;
     document.body.appendChild(inviteEl);
-    const close = () => { if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer); };
+    // It rings (Settings > Huddle calls ring). In the Android app with Huddle in the background,
+    // the phone shows a ringing notification too.
+    const P = window.HuddlePrefs;
+    const stopRing = P && P.get("huddleRing") ? P.ringtone() : () => {};
+    nativeNote({ channel: P && !P.get("huddleRing") ? "messages" : "calls", title: m.group ? `${m.from.display} is calling ${m.group}` : `${m.from.display} is calling`, body: "Huddle call", tag: "invite-" + m.room, url: "/r/" + m.room });
+    const close = () => { stopRing(); if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer); };
     inviteEl.querySelector(".ic-no").onclick = close;
     inviteEl.querySelector(".ic-yes").onclick = () => {
       close();
@@ -1061,6 +1074,15 @@
       if (h.inCall) { document.getElementById("leaveBtn").click(); setTimeout(go, 400); } else go();
     };
     inviteTimer = setTimeout(close, 60000);
+  }
+  // Android app, Huddle in the background: show it as a phone notification (the web app gets
+  // these from the server instead).
+  function nativeNote(n) {
+    const h = H();
+    if (!h.isNativeApp || !h.native || !document.hidden) return;
+    const P = window.HuddlePrefs;
+    if (P && n.channel === "messages" && n.chat && !P.get("chats")) return;
+    h.native("showNotification", { ...n, silent: !!(P && !P.get("sounds")), vibrate: !(P && !P.get("vibrate")) }).catch(() => {});
   }
   function sendPresence() {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "presence", inCall: !!H().inCall }));

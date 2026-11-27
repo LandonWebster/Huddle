@@ -38,9 +38,8 @@ import java.nio.ByteBuffer;
  * Keeps a Huddle call alive while the phone is locked or another app is open.
  *
  * Android requires a "foreground service" for that, and every foreground service must have a
- * notification. Huddle never asks for notification permission, so on Android 13 and newer that
- * notification is hidden from the notification shade. The channel is the quietest Android allows:
- * no sound, no vibration, no badge, hidden on the lock screen.
+ * notification: "You're in a Huddle call", shown in the notification shade and on the lock
+ * screen. Tapping it goes back to the call. It doesn't make a sound or vibrate.
  */
 public class CallService extends Service {
     static final String ACTION_START = "huddle.START";
@@ -49,7 +48,7 @@ public class CallService extends Service {
     static final String EXTRA_RESULT_CODE = "resultCode";
     static final String EXTRA_RESULT_DATA = "resultData";
 
-    private static final String CHANNEL = "huddle_call_quiet";
+    private static final String CHANNEL = "huddle_call";
     private static final int NOTIFICATION_ID = 7;
     private static final int MAX_SIDE = 1280;
     private static final long FRAME_INTERVAL_MS = 1000 / 15;
@@ -117,12 +116,11 @@ public class CallService extends Service {
     private Notification buildNotification() {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null && nm.getNotificationChannel(CHANNEL) == null) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL, "Call running", NotificationManager.IMPORTANCE_MIN);
+            NotificationChannel ch = new NotificationChannel(CHANNEL, "Call in progress", NotificationManager.IMPORTANCE_LOW);
             ch.setSound(null, null);
             ch.enableVibration(false);
-            ch.enableLights(false);
             ch.setShowBadge(false);
-            ch.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(ch);
         }
         Intent open = new Intent(this, MainActivity.class);
@@ -130,15 +128,16 @@ public class CallService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_huddle)
-            .setContentTitle("Huddle")
+            .setContentTitle("You're in a Huddle call")
+            .setContentText("Tap to go back to the call")
             .setContentIntent(pi)
             .setOngoing(true)
             .setSilent(true)
-            .setShowWhen(false)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
+            .setUsesChronometer(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build();
     }
 

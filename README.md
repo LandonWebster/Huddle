@@ -96,7 +96,13 @@ After signing in, Huddle opens on **Home**, with a tab bar along the bottom: Hom
 (chats & friends), Phone, Huddle (start or join a call, games), Video, Photos and Alarms. Your
 account picture is at the top left of every page. The bar hides during calls and inside a chat.
 
-- **Alarms** (alarms, timer, stopwatch) are saved on the device and ring while Huddle is open.
+- **Alarms** (alarms, timer, stopwatch) are saved with your account and ring even when Huddle is
+  closed: the server sends a ringing notification (`alarm-server.js`), and the Android app sets
+  real phone alarms with a full-screen alarm screen.
+- **Settings** (account picture > Settings): switches for phone-call ringing, Huddle-call ringing,
+  alarms, chat notifications, voicemails/missed calls, sounds and vibration. Everything is on until
+  switched off.
+- **Videos** are shrunk on the phone before posting (about 720p, H.264) and can be up to 60 seconds.
 - **Video** and **Photos** are feeds of what people post: like, comment, save, report or block.
   A post reported by 3 different people is hidden for review (reports are saved in the
   `reports` table).

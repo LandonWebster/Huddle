@@ -719,6 +719,9 @@ async function setSetting(key, value) {
   if (await getSetting(key) != null) await q("UPDATE app_settings SET value = $1 WHERE key = $2", [value, key]);
   else await q("INSERT INTO app_settings (key, value) VALUES ($1, $2)", [key, value]);
 }
+async function settingsLike(prefix) {
+  return q("SELECT key, value FROM app_settings WHERE key LIKE $1", [prefix.replace(/[%_]/g, "") + "%"]);
+}
 async function savePushSub(userId, sub) {
   await q("DELETE FROM push_subs WHERE endpoint = $1", [sub.endpoint]);
   await q("INSERT INTO push_subs (endpoint, user_id, data, created_at) VALUES ($1, $2, $3, $4)", [sub.endpoint, userId, JSON.stringify(sub), now()]);
@@ -875,7 +878,7 @@ module.exports = {
   ledgerAdd, ledgerByRef, ledgerUpdate, ledgerPending, ledgerBalance, ledgerRecent,
   cellOf, cellUser, linkedCells, linkCell, unlinkCell,
   contacts, contactName, contactCount, saveContact, deleteContact,
-  phoneCalls, getSetting, setSetting, savePushSub, pushSubs, deletePushSub,
+  phoneCalls, getSetting, setSetting, settingsLike, savePushSub, pushSubs, deletePushSub,
   phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName, userById,
   tidyName, nameKey,
   init, get persistent() { return persistent; },
