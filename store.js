@@ -545,13 +545,16 @@ async function deletePushSub(endpoint, userId) {
   else await q("DELETE FROM push_subs WHERE endpoint = $1", [endpoint]);
 }
 
+async function userById(userId) {
+  return one("SELECT * FROM users WHERE id = $1", [userId]);
+}
 async function userByName(name) {
   return one("SELECT * FROM users WHERE username = $1", [nameKey(name)]);
 }
 
 module.exports = {
   phoneCalls, getSetting, setSetting, savePushSub, pushSubs, deletePushSub,
-  phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName,
+  phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName, userById,
   tidyName, nameKey,
   init, get persistent() { return persistent; },
   createUser, login, newSession, userForToken, endSession, publicUser,
