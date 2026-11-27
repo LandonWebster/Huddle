@@ -980,3 +980,35 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .phone-keys .btn { padding: 10px 0; font-size: 18px; font-variant-numeric: tabular-nums; }
 .phone-err:empty { display: none; }
 .tile .label .phone-tag { margin-left: 6px; color: var(--accent-2); font-size: .9em; white-space: nowrap; }
+.phone-pop { z-index: 70; }
+.phone-pop.floating { position: fixed; top: auto; bottom: calc(20px + var(--safe-b)); }
+.phone-live .btn.on { background: #fff; color: #111; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
+/* Someone is calling the Huddle number: shown on screen only (no sound, no notification). */
+.phone-ring {
+  position: fixed; z-index: 80; left: 50%; transform: translateX(-50%); top: max(12px, env(safe-area-inset-top));
+  width: min(420px, calc(100% - 24px)); display: flex; align-items: center; gap: 10px; padding: 12px;
+  background: #13141c; border: 1px solid #2b59ff; border-radius: 18px; box-shadow: 0 16px 50px rgba(0,0,0,.55);
+  animation: ring-glow 1.6s ease-in-out infinite;
+}
+.phone-ring-icon { width: 40px; height: 40px; flex: none; border-radius: 50%; display: grid; place-items: center; background: #2b59ff; color: #fff; }
+.phone-ring-icon svg { width: 20px; height: 20px; }
+.phone-ring-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.phone-ring-text strong { font-variant-numeric: tabular-nums; }
+.phone-ring-text small { color: var(--muted); font-size: 12px; }
+.phone-ring .btn { padding: 10px 12px; }
+@keyframes ring-glow { 50% { box-shadow: 0 0 0 4px rgba(34,211,238,.35), 0 16px 50px rgba(0,0,0,.55); } }
+@media (prefers-reduced-motion: reduce) { .phone-ring { animation: none; } }
+/* Phone screen */
+.ph-av { background: linear-gradient(135deg, #2b59ff, #22d3ee); }
+.ph-av svg { width: 20px; height: 20px; }
+.ch-av.sm.ph-av svg { width: 16px; height: 16px; }
+.ph-mine { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.ph-new .btn { flex: none; }
+.ph-err:empty { display: none; }
+.ph-event { align-self: center; margin: 6px 0; padding: 4px 12px; border-radius: 999px; background: #13141c; color: var(--muted); font-size: 12.5px; }
+.ph-event.missed { color: #fca5a5; }
+.ph-vm { display: flex; flex-direction: column; gap: 6px; }
+.ph-vm audio { width: min(260px, 60vw); height: 36px; }
+.ph-failed { opacity: .85; }
+.ch-msg.mine .ph-failed .ch-time { color: #fecaca; opacity: 1; }

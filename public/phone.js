@@ -1,7 +1,11 @@
-// Call a real phone number from a Huddle call (through Twilio, set up on the server).
-// The phone joins the call through whoever dialed it: their browser mixes the phone's voice
-// into what they send to everyone, and mixes everyone's voices into what the phone hears.
-// Nothing here rings, buzzes or shows up outside the app: calls only go out, never come in.
+// Real phone calls in Huddle (through Twilio, set up on the server):
+//  - Call a phone number from a Huddle call. The phone joins the call through whoever dialed:
+//    their browser mixes the phone's voice into what they send to everyone, and mixes
+//    everyone's voices into what the phone hears.
+//  - Call a number from the Phone screen (public/phone-inbox.js) when not in a call.
+//  - Call-backs: when someone calls the Huddle number, it shows up here while Huddle is open.
+// Nothing rings, buzzes or shows outside the app: no ring sound, no notification. If the app
+// is closed, callers get voicemail instead.
 (() => {
   "use strict";
   const H = window.huddle;
@@ -9,18 +13,18 @@
 
   const PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>';
   const btn = document.getElementById("phoneBtn");
-  if (!btn) return;
-  btn.innerHTML = PHONE_ICON;
+  if (btn) btn.innerHTML = PHONE_ICON;
 
   // The phone call in progress, and the audio mixes for it.
-  let device = null, call = null, toPhone = null, toPeers = null, phoneStream = null, timer = null, startedAt = 0, rejoinCheck = null;
+  let device = null, deviceReady = null, call = null, callNum = null, toPhone = null, toPeers = null, phoneStream = null;
+  let timer = null, startedAt = 0, rejoinCheck = null, startedInRoom = false, ringing = null;
 
-  // The popup: type a number and call, or see the call and hang up.
+  // ---------- Popup: type a number and call, or see the call and hang up ----------
   const pop = document.createElement("div");
   pop.className = "volume-pop phone-pop";
   pop.hidden = true;
   pop.setAttribute("role", "dialog");
-  pop.setAttribute("aria-label", "Call a phone number");
+  pop.setAttribute("aria-label", "Phone call");
   pop.innerHTML = `
     <form class="phone-dial">
       <strong>Call a phone number</strong>
@@ -36,14 +40,15 @@
       <small class="phone-status"></small>
       <div class="phone-keys" hidden></div>
       <div class="phone-row">
+        <button class="btn" type="button" data-act="mute">Mute</button>
         <button class="btn" type="button" data-act="keys">Keypad</button>
         <button class="btn danger" type="button" data-act="hangup">Hang up</button>
       </div>
     </div>`;
-  document.getElementById("call").append(pop);
+  document.body.append(pop);
   const q = (s) => pop.querySelector(s);
   const form = q(".phone-dial"), input = q("input"), err = q(".phone-err"), callBtn = q("button[type=submit]");
-  const live = q(".phone-live"), numEl = q(".phone-num"), statusEl = q(".phone-status"), keys = q(".phone-keys");
+  const liveBox = q(".phone-live"), numEl = q(".phone-num"), statusEl = q(".phone-status"), keys = q(".phone-keys"), muteBtn = q('[data-act="mute"]');
   for (const d of "123456789*0#") {
     const k = document.createElement("button");
     k.type = "button"; k.className = "btn"; k.textContent = d;
@@ -51,25 +56,44 @@
     keys.append(k);
   }
 
+  // Someone is calling the Huddle number (shown on screen only, no sound).
+  const ring = document.createElement("div");
+  ring.className = "phone-ring";
+  ring.hidden = true;
+  ring.setAttribute("role", "alertdialog");
+  ring.innerHTML = `
+    <span class="phone-ring-icon">${PHONE_ICON}</span>
+    <span class="phone-ring-text"><strong></strong><small>is calling your Huddle number</small></span>
+    <button class="btn danger" type="button" data-act="decline">Decline</button>
+    <button class="btn ok" type="button" data-act="answer">Answer</button>`;
+  document.body.append(ring);
+
+  // In a Huddle call the popup opens from the phone button; outside a call it shows whenever a
+  // phone call is going.
   function show(on) {
     pop.hidden = !on;
-    btn.setAttribute("aria-expanded", String(on));
+    if (btn) btn.setAttribute("aria-expanded", String(on));
     if (on && !call) setTimeout(() => input.focus(), 50);
   }
-  btn.onclick = (e) => { e.stopPropagation(); show(pop.hidden); };
+  if (btn) btn.onclick = (e) => { e.stopPropagation(); show(pop.hidden); };
   pop.onclick = (e) => e.stopPropagation();
-  document.addEventListener("click", () => { if (!pop.hidden) show(false); });
+  ring.onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", () => { if (!pop.hidden && (H.inCall || !call)) show(false); });
 
-  // Only show the button once phone calls are set up on the server.
+  const phoneOn = () => !!(H.config && H.config.phone);
   function renderBtn() {
-    const on = !!(H.config && H.config.phone);
-    btn.hidden = !on && !call;
-    btn.classList.toggle("on-accent", !!call);
-    btn.title = call ? "Phone call" : "Call a phone number";
+    if (btn) {
+      btn.hidden = !phoneOn() && !call;
+      btn.classList.toggle("on-accent", !!call);
+      btn.title = call ? "Phone call" : "Call a phone number";
+    }
+    pop.classList.toggle("floating", !H.inCall);
   }
   renderBtn();
-  window.addEventListener("huddle:joined", () => setTimeout(renderBtn, 0));
-  fetch("/config", { cache: "no-store" }).then((r) => r.json()).then((c) => { if (c.phone) { H.config.phone = true; renderBtn(); } }).catch(() => {});
+  window.addEventListener("huddle:joined", () => setTimeout(() => { renderBtn(); joinMix(); }, 0));
+  fetch("/config", { cache: "no-store" }).then((r) => r.json()).then((c) => {
+    if (c.phone) { H.config.phone = true; renderBtn(); listen(); }
+  }).catch(() => {});
 
   // ---------- Numbers ----------
   function normalize(raw) {
@@ -82,7 +106,7 @@
     }
     return s.length >= 8 && s.length <= 15 ? "+" + s : null;
   }
-  const pretty = (n) => (/^\+1\d{10}$/.test(n) ? `(${n.slice(2, 5)}) ${n.slice(5, 8)}-${n.slice(8)}` : n);
+  const pretty = (n) => (/^\+1\d{10}$/.test(n) ? `(${n.slice(2, 5)}) ${n.slice(5, 8)}-${n.slice(8)}` : n || "Unknown number");
 
   // ---------- Audio mixing ----------
   let ctx = null;
@@ -91,8 +115,7 @@
     try { ctx.resume(); } catch {}
     return ctx;
   }
-  // A mixer: a set of tracks in, one track out. Re-checked every second so people who join or
-  // leave, and mic changes, are picked up.
+  // A mixer: a set of tracks in, one track out.
   function mixer() {
     const c = audioCtx();
     const dest = c.createMediaStreamDestination();
@@ -111,7 +134,7 @@
           } catch {}
         }
       },
-      stop() { for (const s of srcs.values()) try { s.disconnect(); } catch {} srcs.clear(); dest.track && dest.track.stop(); },
+      stop() { for (const s of srcs.values()) try { s.disconnect(); } catch {} srcs.clear(); },
     };
   }
   // On iPhone, reading other people's call audio with Web Audio can silence it, so there the
@@ -120,27 +143,35 @@
   const peerTracks = () => (mixPeers
     ? [...H.peers.values()].filter((p) => p.pc && p.stream).flatMap((p) => p.stream.getAudioTracks())
     : []);
-
-  // ---------- The call ----------
-
   function refreshMix() {
     const mic = H.micTrack();
     if (toPhone) toPhone.set([mic, ...peerTracks()]);
     if (toPeers) toPeers.set([mic, ...(phoneStream ? phoneStream.getAudioTracks() : [])]);
   }
   window.addEventListener("huddle:mic-track", refreshMix);
-
-  function setLive(text) {
-    form.hidden = !!call;
-    live.hidden = !call;
-    statusEl.textContent = text || "";
-    renderBtn();
+  // The phone joins the Huddle call: others hear it through us.
+  function joinMix() {
+    if (!call || !startedAt || !H.inCall || toPeers) return;
+    phoneStream = call.getRemoteStream() || null;
+    toPeers = mixer();
+    refreshMix();
+    H.setSendAudio(toPeers.track);
+    H.setPhoneGuest(callNum.slice(-4));
   }
-  function tick() {
-    const s = Math.floor((Date.now() - startedAt) / 1000);
-    statusEl.textContent = `On the call · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  function leaveMix() {
+    if (toPeers) { H.setSendAudio(null); H.setPhoneGuest(null); toPeers.stop(); toPeers = null; }
+  }
+  // What the phone hears. In a Huddle call: our mic plus everyone else. Otherwise: our mic.
+  function phoneInput(constraints) {
+    if (H.inCall && H.micTrack()) {
+      if (!toPhone) toPhone = mixer();
+      refreshMix();
+      return Promise.resolve(new MediaStream([toPhone.track.clone()]));
+    }
+    return navigator.mediaDevices.getUserMedia(constraints && constraints.audio ? constraints : { audio: true });
   }
 
+  // ---------- Talking to Twilio ----------
   function loadSdk() {
     if (window.Twilio && window.Twilio.Device) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -151,63 +182,125 @@
       document.head.append(s);
     });
   }
-  async function getToken() {
-    let tk = null;
-    try { tk = localStorage.getItem("huddle:token"); } catch {}
-    if (!tk) throw new Error("Sign in to call a phone number");
-    const r = await fetch("/api/phone", { method: "POST", headers: { authorization: "Bearer " + tk } });
+  const signedIn = () => { try { return localStorage.getItem("huddle:token"); } catch { return null; } };
+  async function getToken(listen) {
+    const tk = signedIn();
+    if (!tk) throw new Error("Sign in to use the phone");
+    const r = await fetch("/api/phone", { method: "POST", headers: { authorization: "Bearer " + tk, "content-type": "application/json" }, body: JSON.stringify({ listen: !!listen }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || "Couldn't start the phone call");
+    if (!r.ok) throw new Error(j.error || "Couldn't reach the phone service");
     return j;
   }
-
-  async function dial(num) {
-    err.textContent = "";
-    callBtn.disabled = true;
-    try {
-      audioCtx(); // start audio during the tap
-      const [{ token }] = await Promise.all([getToken(), loadSdk()]);
-      toPhone = mixer();
-      refreshMix();
-      device = new window.Twilio.Device(token, {
+  // One Twilio connection for the whole time the app is open: for calling out, and (for the
+  // person who gets call-backs) for hearing about calls coming in.
+  async function getDevice(listenOnly) {
+    if (device) return device;
+    if (deviceReady) return deviceReady;
+    deviceReady = (async () => {
+      const [j] = await Promise.all([getToken(listenOnly), loadSdk()]);
+      if (!j.token) return null; // this person doesn't get call-backs
+      const d = new window.Twilio.Device(j.token, {
         codecPreferences: ["opus", "pcmu"],
         closeProtection: false,
         logLevel: "warn",
-        // Twilio would open the mic again on its own; give it the mix instead (mic + everyone).
-        getUserMedia: () => Promise.resolve(new MediaStream([toPhone.track.clone()])),
+        allowIncomingWhileBusy: false,
+        getUserMedia: phoneInput,
       });
-      // No extra beeps from Twilio; you hear the phone ring through the call itself.
-      try { device.audio.outgoing(false); device.audio.disconnect(false); device.audio.incoming(false); } catch {}
-      device.on("tokenWillExpire", () => getToken().then((j) => device && device.updateToken(j.token)).catch(() => {}));
-      device.on("error", (e) => console.warn("phone", e && e.message));
-      call = await device.connect({ params: { To: num } });
-      numEl.textContent = pretty(num);
-      setLive("Calling…");
-      call.on("ringing", () => setLive("Ringing…"));
-      call.on("accept", () => {
-        startedAt = Date.now();
-        phoneStream = call.getRemoteStream() || null;
-        toPeers = mixer();
-        refreshMix();
-        H.setSendAudio(toPeers.track);
-        H.setPhoneGuest(num.slice(-4));
-        clearInterval(timer);
-        timer = setInterval(() => { tick(); refreshMix(); }, 1000);
-        tick();
-        H.toast(`${pretty(num)} joined the call`);
-      });
-      const ended = (why) => () => finish(why);
-      call.on("disconnect", ended("Phone call ended"));
-      call.on("cancel", ended("Phone call ended"));
-      call.on("reject", ended("They didn't pick up"));
-      call.on("error", (e) => finish(e && e.code === 31005 ? "The phone call dropped" : "The phone call didn't go through"));
-    } catch (e) {
-      finish(null);
-      err.textContent = (e && e.message) || "Couldn't start the phone call";
-    } finally {
-      callBtn.disabled = false;
-    }
+      // No sounds from Twilio at all: no ringtone, no beeps.
+      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(false); } catch {}
+      d.on("tokenWillExpire", () => getToken(true).then((x) => x.token && d.updateToken(x.token)).catch(() => {}));
+      d.on("error", (e) => console.warn("phone", e && e.message));
+      d.on("incoming", onIncoming);
+      if (j.line) d.register().catch((e) => console.warn("phone register", e && e.message));
+      device = d;
+      return d;
+    })().finally(() => { deviceReady = null; });
+    return deviceReady;
   }
+  // When the app opens (signed in, phone set up): get ready for call-backs.
+  let listenTries = 0;
+  function listen() {
+    if (!phoneOn() || !signedIn() || device || deviceReady || listenTries > 3) return;
+    listenTries++;
+    getDevice(true).catch(() => {});
+  }
+  window.addEventListener("huddle:phone-live", () => { listenTries = 0; listen(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) listen(); });
+  setTimeout(listen, 4000);
+
+  // ---------- Calls ----------
+  function setLive(text) {
+    form.hidden = !!call;
+    liveBox.hidden = !call;
+    statusEl.textContent = text || "";
+    renderBtn();
+    if (call && !H.inCall) show(true);
+  }
+  function tick() {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    statusEl.textContent = `On the call · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+  function wire(c, num) {
+    call = c;
+    callNum = num;
+    startedAt = 0;
+    startedInRoom = !!H.inCall;
+    muteBtn.textContent = "Mute";
+    numEl.textContent = pretty(num);
+    c.on("ringing", () => { if (!startedAt) setLive("Ringing…"); });
+    c.on("accept", () => {
+      startedAt = Date.now();
+      joinMix();
+      clearInterval(timer);
+      timer = setInterval(() => { tick(); refreshMix(); }, 1000);
+      tick();
+      renderBtn();
+      if (H.inCall) H.toast(`${pretty(num)} joined the call`);
+    });
+    c.on("disconnect", () => finish("Phone call ended"));
+    c.on("cancel", () => finish(null));
+    c.on("reject", () => finish("They didn't pick up"));
+    c.on("error", (e) => finish(e && e.code === 31005 ? "The phone call dropped" : "The phone call didn't go through"));
+  }
+
+  async function dial(raw) {
+    const num = normalize(raw);
+    if (!num) throw new Error("Type a 10-digit phone number");
+    if (call) throw new Error("You're already on a phone call");
+    audioCtx(); // start audio during the tap
+    const d = await getDevice(false);
+    if (!d) throw new Error("Couldn't reach the phone service");
+    const c = await d.connect({ params: { To: num } });
+    wire(c, num);
+    setLive("Calling…");
+    // Calling out makes this person the one who gets call-backs from now on.
+    if (d.state !== "registered") d.register().catch(() => {});
+    return true;
+  }
+
+  function onIncoming(c) {
+    if (call || ringing) { try { c.reject(); } catch {} return; }
+    const from = (c.customParameters && c.customParameters.get && c.customParameters.get("from")) || (c.parameters && c.parameters.From) || "";
+    ringing = { c, from };
+    ring.querySelector("strong").textContent = pretty(normalize(from) || from);
+    ring.hidden = false;
+    const gone = () => { if (ringing && ringing.c === c) { ringing = null; ring.hidden = true; } };
+    c.on("cancel", gone);
+    c.on("disconnect", gone);
+    c.on("reject", gone);
+  }
+  ring.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-act]");
+    if (!act || !ringing) return;
+    const { c, from } = ringing;
+    ringing = null;
+    ring.hidden = true;
+    if (act.dataset.act === "decline") { try { c.reject(); } catch {} return; }
+    audioCtx();
+    wire(c, normalize(from) || from);
+    setLive("Connecting…");
+    c.accept();
+  });
 
   function finish(msg) {
     const had = !!call;
@@ -215,41 +308,57 @@
     clearTimeout(rejoinCheck);
     const c = call; call = null;
     if (c) try { c.disconnect(); } catch {}
-    H.setSendAudio(null);
-    H.setPhoneGuest(null);
-    if (toPeers) toPeers.stop();
-    if (toPhone) toPhone.stop();
-    toPeers = toPhone = phoneStream = null;
-    if (device) { const d = device; device = null; try { d.destroy(); } catch {} }
+    leaveMix();
+    if (toPhone) { toPhone.stop(); toPhone = null; }
+    phoneStream = null;
+    startedAt = 0;
     keys.hidden = true;
     setLive("");
+    if (!H.inCall) show(false);
     if (had && msg) H.toast(msg, 3000);
+    window.dispatchEvent(new Event("huddle:phone-ended"));
   }
 
-  form.onsubmit = (e) => {
+  form.onsubmit = async (e) => {
     e.preventDefault();
     if (call) return;
-    const num = normalize(input.value);
-    if (!num) { err.textContent = "Type a 10-digit phone number"; return; }
-    if (!H.inCall) { err.textContent = "Join a call first"; return; }
-    dial(num);
+    err.textContent = "";
+    callBtn.disabled = true;
+    try { await dial(input.value); }
+    catch (x) { finish(null); err.textContent = (x && x.message) || "Couldn't start the phone call"; }
+    finally { callBtn.disabled = false; }
   };
   pop.addEventListener("click", (e) => {
     const act = e.target.closest("[data-act]");
-    if (!act) return;
+    if (!act || !call) return;
     if (act.dataset.act === "hangup") finish("Phone call ended");
     if (act.dataset.act === "keys") keys.hidden = !keys.hidden;
+    if (act.dataset.act === "mute") {
+      const m = !call.isMuted();
+      call.mute(m);
+      muteBtn.textContent = m ? "Unmute" : "Mute";
+      muteBtn.classList.toggle("on", m);
+    }
   });
 
-  // Leaving the call hangs up the phone too. If the app is only reconnecting, keep the phone
-  // on, and hang up if we don't get back in.
+  // Leaving the Huddle call hangs up a phone call that was added to it. A phone call started
+  // outside a call (from the Phone screen, or a call-back) keeps going.
   window.addEventListener("huddle:left", (e) => {
-    show(false);
-    if (!call) return;
+    if (!call) { show(false); renderBtn(); return; }
     if (e.detail && e.detail.rejoining) {
       clearTimeout(rejoinCheck);
-      rejoinCheck = setTimeout(() => { if (!H.inCall) finish("Phone call ended"); }, 60000);
-    } else finish("Phone call ended");
+      rejoinCheck = setTimeout(() => { if (!H.inCall && startedInRoom) finish("Phone call ended"); }, 60000);
+    } else if (startedInRoom) finish("Phone call ended");
+    else { leaveMix(); renderBtn(); show(true); }
   });
   window.addEventListener("pagehide", () => { if (call) finish(null); });
+
+  // For the Phone screen.
+  window.huddlePhone = {
+    dial,
+    pretty,
+    normalize,
+    get busy() { return !!call; },
+    open() { show(true); },
+  };
 })();

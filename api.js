@@ -176,8 +176,15 @@ async function handle(req, res, url) {
     }
     // A short-lived pass for calling a real phone number from a call (Twilio).
     if (route === "POST /phone") {
-      if (tooManyTries("phone:" + me.id)) return json(res, 429, { error: "Too many tries. Wait a few minutes." });
-      const r = await phone.tokenFor(me, req);
+      const body = await readJson(req);
+      if (!body.listen && tooManyTries("phone:" + me.id)) return json(res, 429, { error: "Too many tries. Wait a few minutes." });
+      const r = await phone.tokenFor(me, req, body);
+      return json(res, r.status, r.body);
+    }
+    // The Phone screen: texts, calls and voicemails with real phone numbers.
+    if (parts[0] === "phone" && parts[1] && parts.length === 2) {
+      const body = req.method === "POST" ? await readJson(req) : {};
+      const r = await phone.appRoute(req.method, parts[1], me, url, body, req);
       return json(res, r.status, r.body);
     }
     if (route === "POST /logout") { await store.endSession(tokenOf(req)); return json(res, 200, {}); }
@@ -302,4 +309,4 @@ async function handle(req, res, url) {
   }
 }
 
-module.exports = { handle, attach, presence };
+module.exports = { handle, attach, presence, push, presenceOf };
