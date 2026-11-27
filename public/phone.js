@@ -107,6 +107,9 @@
     return s.length >= 8 && s.length <= 15 ? "+" + s : null;
   }
   const pretty = (n) => (/^\+1\d{10}$/.test(n) ? `(${n.slice(2, 5)}) ${n.slice(5, 8)}-${n.slice(8)}` : n || "Unknown number");
+  // Saved contacts (filled in by the Phone screen): show "Mom" instead of the number.
+  const names = new Map();
+  const label = (n) => names.get(n) || pretty(n);
 
   // ---------- Audio mixing ----------
   let ctx = null;
@@ -255,7 +258,7 @@
     startedAt = 0;
     startedInRoom = !!H.inCall;
     muteBtn.textContent = "Mute";
-    numEl.textContent = pretty(num);
+    numEl.textContent = label(num);
     c.on("ringing", () => { if (!startedAt) setLive("Ringing…"); });
     c.on("accept", () => {
       startedAt = Date.now();
@@ -264,7 +267,7 @@
       timer = setInterval(() => { tick(); refreshMix(); }, 1000);
       tick();
       renderBtn();
-      if (H.inCall) H.toast(`${pretty(num)} joined the call`);
+      if (H.inCall) H.toast(`${label(num)} joined the call`);
     });
     c.on("disconnect", () => finish("Phone call ended"));
     c.on("cancel", () => finish(null));
@@ -292,7 +295,8 @@
     const from = (c.customParameters && c.customParameters.get && c.customParameters.get("from")) || (c.parameters && c.parameters.From) || "";
     ringing = { c, from };
     try { if (navigator.vibrate) navigator.vibrate([400, 200, 400]); } catch {}
-    ring.querySelector("strong").textContent = pretty(normalize(from) || from);
+    const saved = c.customParameters && c.customParameters.get && c.customParameters.get("name");
+    ring.querySelector("strong").textContent = saved || label(normalize(from) || from);
     ring.hidden = false;
     const gone = () => { if (ringing && ringing.c === c) { ringing = null; ring.hidden = true; } };
     c.on("cancel", gone);
@@ -367,7 +371,9 @@
   window.huddlePhone = {
     dial,
     pretty,
+    label,
     normalize,
+    setContacts(list) { names.clear(); for (const c of list || []) names.set(c.number, c.name); },
     get busy() { return !!call; },
     open() { show(true); },
   };

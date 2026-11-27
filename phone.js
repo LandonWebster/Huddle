@@ -260,6 +260,24 @@ async function appRoute(method, sub, user, url, body, req) {
     }
     return { status: 200, body: { options, canChoose, selected: await callerIdFor(user.id, s) } };
   }
+  // Contacts: GET lists them; POST { number, name } saves one, and an empty name deletes it.
+  // { number, oldNumber, name } changes a contact's number too.
+  if (sub === "contacts") {
+    if (method === "POST") {
+      const number = normalize(body.number);
+      if (!number) return { status: 400, body: { error: "Type a 10-digit phone number" } };
+      const old = normalize(body.oldNumber);
+      const name = String(body.name || "").replace(/\s+/g, " ").trim().slice(0, 40);
+      if (!name) await store.deleteContact(user.id, number);
+      else {
+        const isNew = !(await store.contactName(user.id, number));
+        if (isNew && (await store.contactCount(user.id)) >= 1000) return { status: 400, body: { error: "You can save up to 1,000 contacts" } };
+        if (old && old !== number) await store.deleteContact(user.id, old);
+        await store.saveContact(user.id, number, name);
+      }
+    }
+    return { status: 200, body: { contacts: await store.contacts(user.id) } };
+  }
   if (method === "GET" && sub === "calls") return { status: 200, body: { calls: await store.phoneCalls(user.id) } };
   // The app's phone line is connected and can ring (so a waiting caller can be put through).
   if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
@@ -274,9 +292,11 @@ function canRing(userId) {
     return a.presenceOf(userId).online && (lineReady.get(userId) || 0) > a.offlineAt(userId);
   } catch { return false; }
 }
-const ringXml = (s, userId, from) => {
+// "Mom" if this person saved the number as a contact, else "(555) 123-4567".
+const nameOf = async (userId, number) => (await store.contactName(userId, number).catch(() => null)) || pretty(number);
+const ringXml = (s, userId, from, name) => {
   const after = `${s.base}/twilio/after?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`;
-  return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/></Client></Dial>`;
+  return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/>${name ? `<Parameter name="name" value="${xml(name)}"/>` : ""}</Client></Dial>`;
 };
 const HOLD_TRIES = 6; // about 20 seconds
 
@@ -335,14 +355,15 @@ const routes = {
     const from = normalize(p.From) || String(p.From || "unknown").slice(0, 20);
     const userId = await ownerFor(from);
     if (!userId) return `<Say>${xml("Sorry, nobody can take this call right now.")}</Say><Hangup/>`;
-    notify(userId, { kind: "call", title: pretty(from), body: "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
-    if (canRing(userId)) return ringXml(s, userId, from);
+    const name = await store.contactName(userId, from).catch(() => null);
+    notify(userId, { kind: "call", title: name || pretty(from), body: "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
+    if (canRing(userId)) return ringXml(s, userId, from, name);
     return `<Say>${xml("Please hold while I connect you.")}</Say><Redirect>${xml(`${s.base}/twilio/hold?t=1&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`)}</Redirect>`;
   },
   // Waiting for Huddle to open (checked every few seconds).
   async hold(s, p, q) {
     const userId = q.get("u"), from = q.get("n"), t = Number(q.get("t")) || 1;
-    if (canRing(userId)) return ringXml(s, userId, from);
+    if (canRing(userId)) return ringXml(s, userId, from, await store.contactName(userId, from).catch(() => null));
     if (t >= HOLD_TRIES) return voicemail(s, userId, from);
     return `<Pause length="3"/><Redirect>${xml(`${s.base}/twilio/hold?t=${t + 1}&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`)}</Redirect>`;
   },
@@ -369,7 +390,7 @@ const routes = {
       const mediaId = await store.saveMedia({ id: userId }, "audio/mpeg", buf);
       await store.phoneAdd(userId, from, "voicemail", { mediaId, duration: Number(p.RecordingDuration || 0) });
       pushTo(userId, { type: "phone-update", number: from, kind: "voicemail" });
-      notify(userId, { kind: "text", title: pretty(from), body: `New voicemail (${Math.floor((p.RecordingDuration || 0) / 60)}:${String((p.RecordingDuration || 0) % 60).padStart(2, "0")})`, tag: "pvm-" + from, url: "/?phone=" + encodeURIComponent(from) });
+      notify(userId, { kind: "text", title: await nameOf(userId, from), body: `New voicemail (${Math.floor((p.RecordingDuration || 0) / 60)}:${String((p.RecordingDuration || 0) % 60).padStart(2, "0")})`, tag: "pvm-" + from, url: "/?phone=" + encodeURIComponent(from) });
       if (p.RecordingSid) twilio("DELETE", `/Recordings/${p.RecordingSid}.json`).catch(() => {});
     } catch (e) { console.warn("voicemail save failed", e.message); }
     return "";
@@ -380,7 +401,7 @@ const routes = {
 };
 function voicemail(s, userId, from) {
   store.phoneAdd(userId, from, "missed").then(() => pushTo(userId, { type: "phone-update", number: from })).catch(() => {});
-  notify(userId, { kind: "text", title: pretty(from), body: "Missed call", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) });
+  nameOf(userId, from).then((title) => notify(userId, { kind: "text", title, body: "Missed call", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) }));
   const qs = `u=${encodeURIComponent(userId)}&amp;n=${encodeURIComponent(from)}`;
   return `<Say>${xml(GREETING())}</Say><Record maxLength="120" timeout="5" playBeep="true" trim="trim-silence" action="${s.base}/twilio/vm-done" recordingStatusCallback="${s.base}/twilio/recording?${qs}" recordingStatusCallbackEvent="completed"/>`;
 }
