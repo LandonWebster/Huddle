@@ -98,38 +98,34 @@ message. Live while the app is open, plus notifications when turned on (see belo
 `DATABASE_URL` (a free Neon database works). Without it, chats are kept in memory and lost on
 restart. Code: `api.js`, `store.js`, `public/chats.js`.
 
-## Real phone calls and texts (Twilio)
+## Real phone calls (Twilio)
 
-With Twilio set up, Huddle has its own phone number:
+With Twilio set up, Huddle has its own phone number for calls (texting is turned off):
 - **Call out from a Huddle call** (phone button in the call controls). Everyone in the call hears
   the phone, and the phone hears everyone: the person who dialed mixes the audio in their browser.
-- **Phone & texts screen** (lobby): text or call any US/Canada number, see missed calls, play
-  voicemails. New texts and voicemails show up live with a badge while the app is open.
+- **Phone screen** (lobby): call any US/Canada number, see the call log, play voicemails. Missed
+  calls and voicemails show up live with a badge while the app is open.
 - **Call-backs**: calls to the Huddle number ring inside Huddle while it's open. If it's closed,
   a notification goes out and the caller is held ~20 seconds while Huddle opens. If nobody
   answers, callers hear a greeting and can leave a voicemail (up to 2 minutes), which is saved in
   Huddle and deleted from Twilio.
-- **Call log** tab: every incoming, outgoing and missed call and voicemail, with time and length.
-- **Notifications** (turn on in the Phone screen): calls, texts, voicemails and missed calls to
-  the Huddle number, plus chat messages and call invites. Web push with keys made once and saved
+- **Call log**: every incoming, outgoing and missed call and voicemail, with time and length.
+- **Notifications** (turn on in the Phone screen): calls, voicemails and missed calls to the
+  Huddle number, plus chat messages and call invites. Web push with keys made once and saved
   in the database; skipped while Huddle is open on screen. Works in Chrome/Edge/Firefox and
   installed PWAs; iPhone needs Huddle on the Home Screen (iOS 16.4+). The Android APK (WebView)
   can't get them yet.
-- Calls and texts from a number go to whoever in Huddle last talked to it; new numbers go to
+- Calls from a number go to whoever in Huddle last talked to it; new numbers go to
   `PHONE_OWNER` (a Huddle account name) or else whoever used the phone last.
 
 Setup (one time):
-1. Make a Twilio account, upgrade it, and buy one local number with Voice + SMS (~$1.15/month).
+1. Make a Twilio account, upgrade it, and buy one local number with Voice (~$1.15/month).
 2. Copy the **Account SID** and **Auth Token** into Render as `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
 
-On start the server creates a Twilio API key and a "Huddle phone calls" TwiML app, and points the
-number's voice and SMS webhooks at `/twilio/incoming` and `/twilio/sms`. Every webhook checks
-Twilio's signature.
+On start the server creates a Twilio API key and a "Huddle phone calls" TwiML app, points the
+number's voice webhook at `/twilio/incoming`, and clears its SMS webhook. Every webhook checks
+Twilio's signature. No texting (A2P 10DLC) registration is needed.
 
-Texting to US numbers needs A2P 10DLC registration in Twilio (Sole Proprietor for individuals):
-the number's "Complete A2P registration" checklist (compliance profile, Messaging Service, Brand,
-Campaign). Huddle sends through the number's Messaging Service when it has one.
-
-Costs (approx., US): calls ~1.4¢/min + ~0.4¢/min app leg; texts ~1¢ each incl. carrier fees.
+Costs (approx., US): calls ~1.4¢/min + ~0.4¢/min app leg.
 Limits (env vars): `PHONE_ALLOW_PREFIXES` (default `+1`), `PHONE_MAX_MINUTES` (30 per call),
-`PHONE_CALLS_PER_DAY` (20), `PHONE_TEXTS_PER_DAY` (100), `PHONE_GREETING`, `TWILIO_PHONE_NUMBER`.
+`PHONE_CALLS_PER_DAY` (20), `PHONE_GREETING`, `TWILIO_PHONE_NUMBER`.

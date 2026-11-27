@@ -466,7 +466,7 @@ async function mediaOwner(mid) {
 }
 
 // ---------- Phone: texts, calls and voicemails with real phone numbers (see phone.js) ----------
-// kind: text_in, text_out, call_in, call_out, missed, voicemail
+// kind: call_in, call_out, missed, voicemail (text_in / text_out are old texts, no longer shown)
 async function phoneAdd(userId, number, kind, { body = null, mediaId = null, duration = null, status = null, sid = null } = {}) {
   const row = { id: id(), user_id: userId, number, kind, body, media_id: mediaId, duration, status, sid, created_at: now(),
     read_at: /_out$/.test(kind) ? now() : null };
@@ -484,7 +484,7 @@ async function phoneSetStatus(sid, status) {
   return { ...phoneOut({ ...r, status }), userId: r.user_id };
 }
 async function phoneThreads(userId) {
-  const rows = await q("SELECT * FROM phone_log WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1000", [userId]);
+  const rows = await q("SELECT * FROM phone_log WHERE user_id = $1 AND kind NOT IN ('text_in', 'text_out') ORDER BY created_at DESC LIMIT 1000", [userId]);
   const by = new Map();
   for (const r of rows) {
     let t = by.get(r.number);
@@ -495,15 +495,15 @@ async function phoneThreads(userId) {
 }
 async function phoneThread(userId, number, before, limit = 60) {
   const rows = before
-    ? await q("SELECT * FROM phone_log WHERE user_id = $1 AND number = $2 AND created_at < $3 ORDER BY created_at DESC LIMIT $4", [userId, number, Number(before), limit])
-    : await q("SELECT * FROM phone_log WHERE user_id = $1 AND number = $2 ORDER BY created_at DESC LIMIT $3", [userId, number, limit]);
+    ? await q("SELECT * FROM phone_log WHERE user_id = $1 AND number = $2 AND kind NOT IN ('text_in', 'text_out') AND created_at < $3 ORDER BY created_at DESC LIMIT $4", [userId, number, Number(before), limit])
+    : await q("SELECT * FROM phone_log WHERE user_id = $1 AND number = $2 AND kind NOT IN ('text_in', 'text_out') ORDER BY created_at DESC LIMIT $3", [userId, number, limit]);
   return rows.reverse().map(phoneOut);
 }
 async function phoneMarkRead(userId, number) {
   await q("UPDATE phone_log SET read_at = $1 WHERE user_id = $2 AND number = $3 AND read_at IS NULL", [now(), userId, number]);
 }
 async function phoneUnread(userId) {
-  const r = await one("SELECT COUNT(*) AS n FROM phone_log WHERE user_id = $1 AND read_at IS NULL", [userId]);
+  const r = await one("SELECT COUNT(*) AS n FROM phone_log WHERE user_id = $1 AND kind NOT IN ('text_in', 'text_out') AND read_at IS NULL", [userId]);
   return Number((r && r.n) || 0);
 }
 // Who should get a call or text from this number: whoever last talked to it (byNumber), or

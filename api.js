@@ -190,7 +190,7 @@ async function handle(req, res, url) {
       const r = await pushRoute(req.method, parts[1], me, body);
       return json(res, r.status, r.body);
     }
-    // The Phone screen: texts, calls and voicemails with real phone numbers.
+    // The Phone screen: calls and voicemails with real phone numbers.
     if (parts[0] === "phone" && parts[1] && parts.length === 2) {
       const body = req.method === "POST" ? await readJson(req) : {};
       const r = await phone.appRoute(req.method, parts[1], me, url, body, req);

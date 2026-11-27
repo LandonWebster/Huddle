@@ -1,4 +1,4 @@
-// Notifications (web push): incoming phone calls, texts and voicemails to the Huddle number,
+// Notifications (web push): incoming phone calls and voicemails to the Huddle number,
 // plus Huddle chat messages and call invites. They show up even when Huddle is closed, on
 // phones and computers where the person turned notifications on (iPhone: only when Huddle is
 // added to the Home Screen). If Huddle is open and on screen, the app shows things itself and
