@@ -1038,3 +1038,19 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .ph-contact input:focus { outline: none; border-color: #2b59ff; }
 .ph-contact .btn { width: 100%; justify-content: center; }
 .ph-contact .ch-err:empty { display: none; }
+
+/* Phone: link your own cell */
+.ph-cell-row { width: 100%; display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(34,211,238,.25); background: rgba(43,89,255,.10); color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.ph-cell-row span { flex: 1; min-width: 0; }
+.ph-cell-row b { color: #22d3ee; font-weight: 700; white-space: nowrap; }
+.ph-cell { display: flex; flex-direction: column; gap: 12px; font-size: 15px; line-height: 1.45; }
+.ph-cell p { margin: 0; }
+.ph-cell .ph-small { font-size: 13px; color: var(--muted); }
+.ph-cell .ph-ok { color: #4ade80; }
+.ph-cell .ph-ok b { color: var(--text); }
+.ph-code { font-size: 40px; font-weight: 800; letter-spacing: .18em; text-align: center; color: #22d3ee; padding: 10px 0; font-variant-numeric: tabular-nums; }
+.ph-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ph-steps li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--panel-2); }
+.ph-cell code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #22d3ee; user-select: all; -webkit-user-select: all; }
+.ph-steps code { font-size: 16px; }
+.ph-cell .btn { width: 100%; justify-content: center; }
