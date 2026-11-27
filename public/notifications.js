@@ -1,5 +1,5 @@
 // Notifications: turn them on for this device, and open the right screen when one is tapped.
-// They cover calls and texts to your Huddle number, voicemails, chat messages and call invites.
+// They cover calls to your Huddle number, voicemails, chat messages and call invites.
 // iPhone: only works after Huddle is added to the Home Screen (Safari > Share > Add to Home Screen).
 (() => {
   "use strict";

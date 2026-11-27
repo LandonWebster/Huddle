@@ -1,5 +1,5 @@
-// Real phone calls and texts in Huddle, through Twilio: call a number from a call (the phone
-// joins the call), call-backs that ring inside Huddle while it's open, voicemail, and texting.
+// Real phone calls in Huddle, through Twilio: call a number from a call (the phone joins the
+// call), call-backs that ring inside Huddle, and voicemail. (Texting was turned off on purpose.)
 //
 // Setup is two values in Render: TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN (from the Twilio
 // console), plus one phone number bought in that Twilio account. Everything else (the API key
@@ -19,13 +19,12 @@
 //  PHONE_ALLOW_PREFIXES   comma list of allowed number starts (default "+1": US and Canada)
 //  PHONE_MAX_MINUTES      longest phone call, in minutes (default 30)
 //  PHONE_CALLS_PER_DAY    calls each person can make per day (default 20)
-//  PHONE_TEXTS_PER_DAY    texts each person can send per day (default 100)
-//  PHONE_OWNER            Huddle account name that gets calls/texts from new numbers (default:
+//  PHONE_OWNER            Huddle account name that gets calls from new numbers (default:
 //                         whoever used the phone last)
 //  PHONE_GREETING         what callers hear before leaving a voicemail
 //  PUBLIC_URL             this app's address (Render sets RENDER_EXTERNAL_URL on its own)
 //
-// Incoming calls and texts reach whoever last called or texted that number from Huddle, with a
+// Incoming calls reach whoever last called that number from Huddle, with a
 // notification (when they turned notifications on). If Huddle is closed, the caller is held for
 // about 20 seconds while it opens from the notification, then goes to voicemail.
 const crypto = require("crypto");
@@ -41,7 +40,6 @@ const enabled = () => /^AC[0-9a-f]{32}$/i.test(SID()) && !!AUTH();
 const ALLOW = () => env("PHONE_ALLOW_PREFIXES", "+1").split(",").map((s) => s.trim()).filter(Boolean);
 const MAX_MINUTES = () => Math.max(1, Math.min(240, Number(env("PHONE_MAX_MINUTES", "30")) || 30));
 const PER_DAY = () => Math.max(1, Number(env("PHONE_CALLS_PER_DAY", "20")) || 20);
-const TEXTS_PER_DAY = () => Math.max(1, Number(env("PHONE_TEXTS_PER_DAY", "100")) || 100);
 const GREETING = () => env("PHONE_GREETING", "Hi, you've reached Huddle. Please leave a message after the beep.");
 const APP_NAME = "Huddle phone calls";
 const KEY_NAME = "huddle-auto";
@@ -90,9 +88,10 @@ async function doSetup(base) {
   const owned = callerId ? list.find((x) => x.phone_number === callerId) : list.find((x) => x.capabilities && x.capabilities.voice !== false);
   if (owned) {
     callerId = owned.phone_number;
-    // Calls and texts to this number come to Huddle (call-backs, voicemail, texts).
-    const want = { VoiceUrl: `${base}/twilio/incoming`, VoiceMethod: "POST", SmsUrl: `${base}/twilio/sms`, SmsMethod: "POST" };
-    if (owned.voice_url !== want.VoiceUrl || owned.sms_url !== want.SmsUrl) {
+    // Calls to this number come to Huddle (call-backs, voicemail). Texting is off, so texts
+    // aren't sent to Huddle.
+    const want = { VoiceUrl: `${base}/twilio/incoming`, VoiceMethod: "POST", SmsUrl: "" };
+    if (owned.voice_url !== want.VoiceUrl || (owned.sms_url || "") !== "") {
       await twilio("POST", `/IncomingPhoneNumbers/${owned.sid}.json`, want).catch((e) => console.warn("Couldn't point the number at Huddle:", e.message));
     }
   }
@@ -172,7 +171,7 @@ const fail = (e) => {
 const pretty = (n) => (/^\+1\d{10}$/.test(n) ? `(${n.slice(2, 5)}) ${n.slice(5, 8)}-${n.slice(8)}` : n);
 const pushTo = (userId, msg) => { try { live().push(userId, msg); } catch {} };
 
-// Is this person the one who gets calls and texts? (So the app knows to listen for call-backs.)
+// Is this person the one who gets calls? (So the app knows to listen for call-backs.)
 async function isLineUser(user) {
   const owner = env("PHONE_OWNER");
   if (owner && store.nameKey(owner) === user.username) return true;
@@ -202,8 +201,7 @@ async function tokenFor(user, req, body = {}) {
 
 // ---------- Which number shows when calling out ----------
 // The Huddle (Twilio) number, or a cell verified in Twilio (a "Verified Caller ID"). Only the
-// phone's owner can show a verified cell; everyone else shows the Huddle number. Texts always
-// come from the Huddle number (Twilio can't text from a verified cell).
+// phone's owner can show a verified cell; everyone else shows the Huddle number.
 async function isOwner(user) {
   const owner = env("PHONE_OWNER");
   if (owner) return store.nameKey(owner) === user.username;
@@ -235,7 +233,7 @@ async function callerIdFor(userId, s) {
   return s.callerId;
 }
 
-// Everything else under /api/phone/...: the Phone screen (texts, calls, voicemails).
+// Everything else under /api/phone/...: the Phone screen (calls and voicemails).
 async function appRoute(method, sub, user, url, body, req) {
   if (!enabled()) return { status: 404, body: { error: "Phone isn't set up yet" } };
   if (method === "GET" && sub === "threads") {
@@ -251,7 +249,6 @@ async function appRoute(method, sub, user, url, body, req) {
     if (number) await store.phoneMarkRead(user.id, number);
     return { status: 200, body: { unread: await store.phoneUnread(user.id) } };
   }
-  if (method === "POST" && sub === "text") return sendText(user, body, req);
   if (sub === "callerid") {
     let s;
     try { s = await ready(req); } catch (e) { return fail(e); }
@@ -267,61 +264,6 @@ async function appRoute(method, sub, user, url, body, req) {
   // The app's phone line is connected and can ring (so a waiting caller can be put through).
   if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
   return { status: 404, body: { error: "Not found" } };
-}
-
-// Texts go out through the number's Messaging Service when it has one (texting registration
-// puts the number in one), otherwise straight from the number.
-let msgService = { sid: null, at: 0 };
-async function messagingServiceFor(number) {
-  if (Date.now() - msgService.at < 10 * 60 * 1000) return msgService.sid;
-  msgService = { sid: null, at: Date.now() };
-  try {
-    const list = await twilio("GET", "https://messaging.twilio.com/v1/Services?PageSize=50");
-    for (const svc of list.services || []) {
-      const nums = await twilio("GET", `https://messaging.twilio.com/v1/Services/${svc.sid}/PhoneNumbers?PageSize=50`);
-      if ((nums.phone_numbers || []).some((p) => p.phone_number === number)) {
-        msgService.sid = svc.sid;
-        // Let texts to the number keep coming to Huddle, not to the service's own setting.
-        if (!svc.use_inbound_webhook_on_number) await twilio("POST", `https://messaging.twilio.com/v1/Services/${svc.sid}`, { UseInboundWebhookOnNumber: "true" }).catch(() => {});
-        break;
-      }
-    }
-  } catch (e) { console.warn("Messaging service lookup failed:", e.message); }
-  return msgService.sid;
-}
-const TEXT_ERRORS = {
-  30034: "Not delivered: the number's texting registration isn't approved yet",
-  30007: "Not delivered: the carrier blocked it as spam",
-  30003: "Not delivered: their phone is off or can't get texts",
-  30005: "Not delivered: that number doesn't exist",
-  30006: "Not delivered: that number can't get texts (landline?)",
-  21610: "Not delivered: they replied STOP to your texts",
-  21608: "Not delivered: trial accounts can only text verified numbers",
-  21614: "Not delivered: that number can't get texts",
-};
-async function sendText(user, body, req) {
-  const to = normalize(body.to);
-  const why = allowed(to);
-  if (why) return { status: 400, body: { error: why.replace("call", "text") } };
-  const text = String(body.text || "").trim().slice(0, 1000);
-  if (!text) return { status: 400, body: { error: "Type a message" } };
-  if (overLimit("t:" + user.id, true, TEXTS_PER_DAY())) return { status: 429, body: { error: `You've sent ${TEXTS_PER_DAY()} texts today. Try again tomorrow.` } };
-  let s;
-  try { s = await ready(req); } catch (e) { return fail(e); }
-  if (!s.owned) return { status: 400, body: { error: "Texting needs a phone number bought in Twilio" } };
-  const form = { To: to, Body: text, StatusCallback: `${s.base}/twilio/sms-status` };
-  const svc = await messagingServiceFor(s.callerId);
-  if (svc) form.MessagingServiceSid = svc; else form.From = s.callerId;
-  try {
-    const m = await twilio("POST", "/Messages.json", form);
-    const item = await store.phoneAdd(user.id, to, "text_out", { body: text, status: m.status || "queued", sid: m.sid });
-    pushTo(user.id, { type: "phone-update", number: to });
-    return { status: 200, body: { item } };
-  } catch (e) {
-    const item = await store.phoneAdd(user.id, to, "text_out", { body: text, status: "failed:" + (e.code || "") });
-    pushTo(user.id, { type: "phone-update", number: to });
-    return { status: 200, body: { item, error: TEXT_ERRORS[e.code] || "Couldn't send that text" } };
-  }
 }
 
 // Whose phone line in the app is connected right now.
@@ -352,7 +294,7 @@ function twiml(res, inner) {
   res.end(`<?xml version="1.0" encoding="UTF-8"?><Response>${inner}</Response>`);
 }
 
-// Who gets a call or text from this number: whoever in Huddle last talked to it, else the
+// Who gets a call from this number: whoever in Huddle last talked to it, else the
 // PHONE_OWNER account, else whoever used the phone last.
 async function ownerFor(number) {
   const known = await store.phoneUserFor(number, true);
@@ -432,28 +374,9 @@ const routes = {
     } catch (e) { console.warn("voicemail save failed", e.message); }
     return "";
   },
-  // A text came in.
-  async sms(s, p) {
-    const from = normalize(p.From);
-    if (!from) return "";
-    const userId = await ownerFor(from);
-    if (!userId) return "";
-    let body = String(p.Body || "").slice(0, 2000);
-    const pics = Number(p.NumMedia || 0);
-    if (pics) body = (body ? body + "\n" : "") + (pics === 1 ? "[sent a picture]" : `[sent ${pics} pictures]`);
-    await store.phoneAdd(userId, from, "text_in", { body, sid: p.MessageSid || null });
-    pushTo(userId, { type: "phone-update", number: from, kind: "text" });
-    notify(userId, { kind: "text", title: pretty(from), body: body.slice(0, 140), tag: "ptext-" + from, url: "/?phone=" + encodeURIComponent(from) });
-    return "";
-  },
-  // Delivery reports for texts we sent.
-  async "sms-status"(s, p) {
-    if (!p.MessageSid) return "";
-    const st = p.ErrorCode ? `failed:${p.ErrorCode}` : p.MessageStatus;
-    const r = await store.phoneSetStatus(p.MessageSid, st).catch(() => null);
-    if (r) pushTo(r.userId, { type: "phone-update", number: r.number });
-    return "";
-  },
+  // Texting is off: anything Twilio still sends here is ignored.
+  async sms() { return ""; },
+  async "sms-status"() { return ""; },
 };
 function voicemail(s, userId, from) {
   store.phoneAdd(userId, from, "missed").then(() => pushTo(userId, { type: "phone-update", number: from })).catch(() => {});
@@ -485,7 +408,7 @@ function webhook(req, res, url) {
   });
 }
 
-// Get ready as soon as the server starts, so call-backs and texts work before anyone dials.
+// Get ready as soon as the server starts, so call-backs work before anyone dials.
 if (enabled() && (env("PUBLIC_URL") || env("RENDER_EXTERNAL_URL"))) setTimeout(() => ready(null).catch(() => {}), 3000);
 
 module.exports = { enabled, tokenFor, appRoute, webhook, normalize, allowed, pretty, _accessToken: accessToken, _validSignature: validSignature };

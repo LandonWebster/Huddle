@@ -1010,12 +1010,10 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .ph-event.missed { color: #fca5a5; }
 .ph-vm { display: flex; flex-direction: column; gap: 6px; }
 .ph-vm audio { width: min(260px, 60vw); height: 36px; }
-.ph-failed { opacity: .85; }
-.ch-msg.mine .ph-failed .ch-time { color: #fecaca; opacity: 1; }
 .ph-notify { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; padding: 10px 12px; border-radius: 14px; background: var(--c-panel); border: 1px solid var(--c-line); font-size: 13px; color: var(--muted); }
 .ph-notify span { flex: 1; }
 .ph-notify .btn { flex: none; padding: 8px 12px; }
-.ph-tabs { margin: 0 0 4px; }
+.ph-log-head { margin: 14px 2px 6px; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .ph-call-row { display: flex; align-items: center; }
 .ph-call-row > button:first-child { flex: 1; min-width: 0; width: auto; }
 .ch-list .ph-call-row > .ph-callback { width: 44px; height: 44px; flex: none; padding: 0; justify-content: center; }
