@@ -32,3 +32,6 @@ services:
         sync: false
       - key: TWILIO_AUTH_TOKEN
         sync: false
+      # Optional: pay-as-you-go phone calls for everyone but the owner (Stripe secret key).
+      - key: STRIPE_SECRET_KEY
+        sync: false

@@ -56,7 +56,7 @@
     return "";
   }
 
-  let view = null; // "list" | "thread" | "contact" | "cell"
+  let view = null; // "list" | "thread" | "contact" | "cell" | "billing"
   let current = null; // number open in the thread view
   let tab = "calls"; // list tab: "calls" | "contacts"
   let contacts = []; // [{ number, name }], sorted by name
@@ -89,12 +89,12 @@
   }
   window.addEventListener("popstate", () => {
     if (root.hidden) return;
-    if (view === "contact" || view === "thread" || view === "cell") { goBack(); history.pushState({ huddlePhone: 1 }, ""); }
+    if (view === "contact" || view === "thread" || view === "cell" || view === "billing") { goBack(); history.pushState({ huddlePhone: 1 }, ""); }
     else hide();
   });
   const goBack = () => {
     if (view === "contact" && editBack) editBack();
-    else if (view === "thread" || view === "contact" || view === "cell") openList();
+    else if (view === "thread" || view === "contact" || view === "cell" || view === "billing") openList();
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
   openBtn.onclick = () => {
@@ -116,6 +116,7 @@
       </header>
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
+        <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
         <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
@@ -141,6 +142,7 @@
     renderCallerId();
     renderCellRow();
     $0('[data-act="cell"]').onclick = openCell;
+    $0('[data-act="billing"]').onclick = openBilling;
     const $ = (s) => root.querySelector(s);
     $('[data-act="back"]').onclick = goBack;
     const input = $(".ph-new input"), errEl = $(".ph-err");
@@ -241,29 +243,95 @@
   }
   async function renderCalls(list) {
     let j;
-    try { [j] = await Promise.all([api("GET", "calls"), loadContacts()]); } catch (e) { list.innerHTML = `<li class="ch-empty">${esc(e.message)}</li>`; return; }
+    try { [j] = await Promise.all([api("GET", "calls"), loadContacts(), loadBilling().then(renderBalRow)]); } catch (e) { list.innerHTML = `<li class="ch-empty">${esc(e.message)}</li>`; return; }
     if (view !== "list") return;
     if (!j.calls.length) { list.innerHTML = `<li class="ch-empty">No calls yet. Type a number above to call it. Missed calls and voicemails to your Huddle number show up here.</li>`; return; }
     list.innerHTML = j.calls.map((c) => `
       <li class="ph-call-row"><button type="button" data-n="${esc(c.number)}">
         <span class="ph-dir ${c.kind}">${ARROW[c.kind] || ""}</span>
-        <span class="ch-row"><strong class="${c.kind === "missed" ? "ph-missed" : ""}">${esc(label(c.number))}</strong><small>${esc(callLabel(c))}</small></span>
+        <span class="ch-row"><strong class="${c.kind === "missed" ? "ph-missed" : ""}">${esc(label(c.number))}</strong><small>${esc(callLabel(c))}${costOf(c.sid) && costOf(c.sid).status === "done" ? " \u00b7 " + esc(money(costOf(c.sid).amount)) : ""}</small></span>
         <span class="ch-meta"><span>${esc(fullTime(c.at))}</span>${c.unread ? '<span class="ch-dot">new</span>' : ""}</span>
       </button><button type="button" class="ch-icon ph-callback" data-call="${esc(c.number)}" aria-label="Call ${esc(label(c.number))} back">${IC.phone}</button></li>`).join("");
     list.querySelectorAll("button[data-n]").forEach((b) => { b.onclick = () => openThread(b.dataset.n); });
     list.querySelectorAll("button[data-call]").forEach((b) => { b.onclick = () => callNumber(b.dataset.call); });
   }
 
+  // ---------- Phone balance (pay-as-you-go calls; the phone's owner doesn't pay) ----------
+  let bill = null; // last /billing answer: { active, balance, items, amounts, test }
+  function money(d) {
+    const a = Math.abs(d);
+    if (a >= 1) return "$" + a.toFixed(2);
+    const c = a * 100;
+    return (c < 10 ? c.toFixed(1) : c.toFixed(0)) + "\u00a2";
+  }
+  function costOf(sid) {
+    if (!bill || !bill.active || !sid) return null;
+    return bill.items.find((i) => i.kind === "call" && i.ref === sid) || null;
+  }
+  async function loadBilling() {
+    try { bill = await api("GET", "billing"); } catch { bill = null; }
+    return bill;
+  }
+  function renderBalRow() {
+    const row = $0(".ph-bal-row");
+    if (!row || !bill || !bill.active) return;
+    row.hidden = false;
+    row.classList.toggle("low", bill.balance <= 0.05);
+    row.querySelector("span").textContent = "Phone balance: $" + Math.max(0, bill.balance).toFixed(2);
+  }
+  function billRow(i) {
+    const t = fullTime(i.at);
+    if (i.kind === "topup") {
+      const feeNote = i.paid ? ` \u00b7 paid $${Number(i.paid).toFixed(2)}${i.fee ? " (card fee " + money(i.fee) + ")" : ""}` : "";
+      return `<li><span class="ch-row"><strong>Added money</strong><small>${esc(t + feeNote)}${i.status === "pending" ? " \u00b7 waiting for payment" : ""}</small></span><span class="ph-amt plus">+$${i.amount.toFixed(2)}</span></li>`;
+    }
+    if (i.kind === "number") return `<li><span class="ch-row"><strong>Your Huddle number, 1 month</strong><small>${esc(t + " \u00b7 " + pretty(i.number))}</small></span><span class="ph-amt">-${esc(money(i.amount))}</span></li>`;
+    const what = (i.dir === "in" ? "Call from " : "Call to ") + label(i.number);
+    const len = i.seconds != null ? " \u00b7 " + dur(i.seconds) : "";
+    const amt = i.status === "pending" ? "\u2026" : "-" + money(i.amount);
+    return `<li><span class="ch-row"><strong>${esc(what)}</strong><small>${esc(t + len)}${i.status === "pending" ? " \u00b7 working out the cost" : ""}</small></span><span class="ph-amt">${esc(amt)}</span></li>`;
+  }
+  async function openBilling() {
+    view = "billing";
+    root.innerHTML = `
+      <header class="ch-head">
+        <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
+        <strong>Phone balance</strong>
+        <span class="ch-sp"></span>
+      </header>
+      <div class="ch-body ph-cell ph-bill"><p class="ch-empty">Loading\u2026</p></div>`;
+    $0('[data-act="back"]').onclick = goBack;
+    await loadBilling();
+    if (view !== "billing") return;
+    const box = $0(".ph-bill");
+    if (!bill || !bill.active) { box.innerHTML = "<p>Phone calls are free for you.</p>"; return; }
+    const amounts = bill.amounts.map((a) => `<button class="btn primary" type="button" data-amt="${a.credit}">Add $${a.credit}<small>pay $${a.pay.toFixed(2)}${a.fee ? " (" + money(a.fee) + " card fee)" : ""}</small></button>`).join("");
+    box.innerHTML = `
+      <p class="ph-balance">$${Math.max(0, bill.balance).toFixed(2)}</p>
+      <p class="ph-small ph-center">Each phone call costs exactly what it costs to run (about 2\u00a2 a minute). Calls stop when this reaches $0, and calls to you go to voicemail.</p>
+      ${bill.test ? '<p class="ph-small ph-test">Test mode: use card 4242 4242 4242 4242, any future date, any CVC. No real money moves.</p>' : ""}
+      <div class="ph-amounts">${amounts}</div>
+      <h3 class="ph-log-head">History</h3>
+      <ul class="ch-list ph-bill-list">${bill.items.map(billRow).join("") || '<li class="ch-empty">Nothing yet.</li>'}</ul>`;
+    box.querySelectorAll("[data-amt]").forEach((b) => {
+      b.onclick = async () => {
+        box.querySelectorAll("[data-amt]").forEach((x) => (x.disabled = true));
+        try { const j = await api("POST", "billing", { amount: Number(b.dataset.amt) }); location.href = j.url; }
+        catch (e) { toast(e.message, 5000); box.querySelectorAll("[data-amt]").forEach((x) => (x.disabled = false)); }
+      };
+    });
+  }
+
   // ---------- Your cell: link it so calls to it ring here ----------
   async function renderCellRow() {
-    const row = $0(".ph-cell-row");
+    const row = $0('[data-act="cell"]');
     if (!row) return;
     let j;
     try { j = await api("GET", "cell"); } catch { return; }
     if (!root.contains(row)) return;
     row.hidden = false;
-    row.querySelector("span").textContent = j.cell ? `Your cell ${pretty(j.cell)} rings here` : "Make Huddle ring when someone calls your cell";
-    row.querySelector("b").textContent = j.cell ? "Setup" : "Link cell";
+    row.querySelector("span").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Make Huddle ring when you miss a call on your cell";
+    row.querySelector("b").textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
   }
   let cellPoll = null;
   async function openCell() {
@@ -272,7 +340,7 @@
     root.innerHTML = `
       <header class="ch-head">
         <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
-        <strong>Your cell</strong>
+        <strong>Calls to your cell</strong>
         <span class="ch-sp"></span>
       </header>
       <div class="ch-body ph-cell"><p class="ch-empty">Loading…</p></div>`;
@@ -281,56 +349,96 @@
     try { j = await api("GET", "cell"); } catch (e) { $0(".ph-cell").innerHTML = `<p class="ch-empty">${esc(e.message)}</p>`; return; }
     renderCell(j);
   }
-  function renderCell(j) {
+  // The "Your cell" screen. 1) People who pay get their own Huddle number first (the owner uses
+  // the main one). 2) Forwarding codes to dial on their cell, filled in with that number.
+  // 3) Optional: prove the cell is theirs, so it can show as their caller ID.
+  async function renderCell(j) {
     if (view !== "cell") return;
     clearTimeout(cellPoll);
     const box = $0(".ph-cell");
-    const hn = (j.huddleNumber || "").replace(/^\+/, ""), hn10 = hn.replace(/^1(?=\d{10}$)/, ""); // Verizon wants 10 digits
-    if (j.cell) {
-      box.innerHTML = `
-        <p class="ph-ok">✓ Your cell <b>${esc(pretty(j.cell))}</b> is linked.</p>
-        <p>Last step: set your cell to forward calls you don't answer to Huddle. Open your phone's dialer, type the code for your carrier, and press call:</p>
+    let html = "";
+    if (j.needsNumber) {
+      await loadBilling();
+      if (view !== "cell") return;
+      const monthly = bill && bill.monthly ? bill.monthly : 1.15;
+      const bal = bill && bill.active ? bill.balance : 0;
+      const up = bill && bill.upgrade;
+      const enough = bal >= monthly;
+      html += `
+        <p class="ph-step">Step 1: get your own Huddle number</p>
+        <p>Calls you don't answer on your cell will go to this number and ring you in Huddle. It costs $${monthly.toFixed(2)} a month, taken from your phone balance (you have $${Math.max(0, bal).toFixed(2)}). Calls cost exactly what they cost to run, about 2\u00a2 a minute.</p>
+        ${enough ? '<button class="btn primary" type="button" data-act="buy">Get my Huddle number</button>'
+          : up ? `<button class="btn primary" type="button" data-act="upgrade">Get my number: pay $${up.pay.toFixed(2)}</button>
+            <p class="ph-small ph-center">$${up.month.toFixed(2)} first month + $${up.credit.toFixed(2)} call credit + ${money(up.fee)} card fee</p>` : ""}`;
+    } else if (j.huddleNumber) {
+      const hn = j.huddleNumber.replace(/^\+/, ""), hn10 = hn.replace(/^1(?=\d{10}$)/, ""); // Verizon wants 10 digits
+      html += `
+        <p class="ph-ok">Your Huddle number: <b>${esc(pretty(j.huddleNumber))}</b></p>
+        <p>Set your cell to forward calls you don't answer to it. Your cell still rings first; if you don't pick up, Huddle rings. Open your phone's dialer, type the code for your carrier, and press call:</p>
         <ul class="ph-steps">
           <li><b>AT&amp;T or T-Mobile</b><code>**61*${esc(hn)}#</code></li>
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
         </ul>
-        <p class="ph-small">To forward every call instead (your cell won't ring at all): <code>**21*${esc(hn)}#</code> on AT&amp;T or T-Mobile, <code>*72${esc(hn10)}</code> on Verizon. To stop forwarding: <code>##61#</code> / <code>##21#</code>, or <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>
-        <p class="ph-small">Your cell can also show as your caller ID when you call from Huddle. Pick it under "Calls show".</p>
-        <button class="btn danger" type="button" data-act="unlink">Unlink this cell</button>`;
-      box.querySelector('[data-act="unlink"]').onclick = async () => {
-        try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked. Remember to turn off forwarding on your phone."); } catch (e) { toast(e.message, 5000); }
-      };
-      return;
+        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>`;
     }
-    if (j.pending && !j.pending.failed) {
-      box.innerHTML = `
-        <p>We're calling <b>${esc(pretty(j.pending.number))}</b> now. Answer it and type this code on the keypad:</p>
+    // Optional: your cell as caller ID.
+    let cellHtml = "";
+    if (j.cell) {
+      cellHtml = `<p class="ph-ok">&#10003; Your cell <b>${esc(pretty(j.cell))}</b> is linked. It can show as your caller ID (pick it under "Calls show").</p>
+        <button class="btn" type="button" data-act="unlink">Unlink this cell</button>`;
+    } else if (j.pending && !j.pending.failed) {
+      cellHtml = `<p>We're calling <b>${esc(pretty(j.pending.number))}</b> now. Answer it and type this code on the keypad:</p>
         <p class="ph-code">${esc(j.pending.code)}</p>
         <p class="ph-small">This page updates by itself when it works.</p>
         <button class="btn" type="button" data-act="restart">Use a different number</button>`;
-      box.querySelector('[data-act="restart"]').onclick = () => renderCell({ ...j, pending: null });
       cellPoll = setTimeout(async () => { try { renderCell(await api("GET", "cell")); } catch {} }, 3000);
-      return;
+    } else {
+      cellHtml = `<p class="ph-small">Want people you call from Huddle to see your cell number? Prove the cell is yours: we call it and you type a code.</p>
+        ${j.pending && j.pending.failed ? '<p class="ch-err">That didn\'t work. Check the number and try again.</p>' : ""}
+        <form class="ph-contact">
+          <label>Your cell number<input name="number" type="tel" inputmode="tel" maxlength="22" placeholder="(555) 123-4567" value="${esc(j.pending ? pretty(j.pending.number) : "")}" required></label>
+          <p class="ch-err"></p>
+          <button class="btn" type="submit">Call me with a code</button>
+        </form>`;
     }
-    box.innerHTML = `
-      <p>Link your own cell so that when someone calls it and you don't pick up, Huddle rings instead (with a notification if Huddle is closed).</p>
-      <p class="ph-small">First we prove the cell is yours: we call it and you type a code. It's free.</p>
-      ${j.pending && j.pending.failed ? '<p class="ch-err">That didn\'t work. Check the number and try again.</p>' : ""}
-      <form class="ph-contact">
-        <label>Your cell number<input name="number" type="tel" inputmode="tel" maxlength="22" placeholder="(555) 123-4567" value="${esc(j.pending ? pretty(j.pending.number) : "")}" required></label>
-        <p class="ch-err"></p>
-        <button class="btn primary" type="submit">Call me with a code</button>
-      </form>`;
-    const form = box.querySelector("form"), err = form.querySelector(".ch-err");
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const n = normalize(form.number.value);
-      if (!n) { err.textContent = "Type a 10-digit phone number"; return; }
-      form.querySelector("button").disabled = true;
-      try { renderCell(await api("POST", "cell", { number: n })); }
-      catch (x) { err.textContent = x.message; form.querySelector("button").disabled = false; }
-    };
+    html += `<h3 class="ph-log-head">Your cell as caller ID</h3>` + cellHtml;
+    if (j.ownNumber) html += `<button class="btn danger ph-giveup" type="button" data-act="giveup">Give up my Huddle number</button>`;
+    box.innerHTML = html;
+    const on = (sel, fn) => { const el = box.querySelector(sel); if (el) el.onclick = fn; };
+    on('[data-act="money"]', openBilling);
+    on('[data-act="upgrade"]', async (e) => {
+      e.target.disabled = true;
+      try { const r = await api("POST", "billing", { action: "upgrade" }); location.href = r.url; }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
+    });
+    on('[data-act="buy"]', async (e) => {
+      e.target.disabled = true;
+      try { const r = await api("POST", "billing", { action: "buy-number" }); toast("Your Huddle number is " + pretty(r.number)); openCell(); }
+      catch (x) { toast(x.message, 6000); e.target.disabled = false; }
+    });
+    on('[data-act="giveup"]', async (e) => {
+      if (e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Tap again to give it up for good"; return; }
+      try { await api("POST", "billing", { action: "release-number" }); toast("Number given up. Turn off forwarding on your cell."); openCell(); }
+      catch (x) { toast(x.message, 5000); }
+    });
+    on('[data-act="unlink"]', async () => {
+      try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked"); } catch (x) { toast(x.message, 5000); }
+    });
+    on('[data-act="restart"]', () => renderCell({ ...j, pending: null }));
+    const form = box.querySelector("form.ph-contact");
+    if (form) {
+      const err = form.querySelector(".ch-err");
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const n = normalize(form.number.value);
+        if (!n) { err.textContent = "Type a 10-digit phone number"; return; }
+        form.querySelector("button").disabled = true;
+        try { renderCell(await api("POST", "cell", { number: n })); }
+        catch (x) { err.textContent = x.message; form.querySelector("button").disabled = false; }
+      };
+    }
   }
+
 
   // ---------- Which number people see when you call ----------
   async function renderCallerId() {
@@ -442,6 +550,7 @@
   window.addEventListener("huddle:signed-in", refreshBadge);
   // From a notification: open that number's call history.
   window.addEventListener("huddle:open-phone", (e) => {
+    if (e.detail === "billing" && token()) { if (root.hidden) show(); openBilling(); return; }
     const n = normalize(e.detail);
     if (!n || !token()) return;
     if (root.hidden) show();

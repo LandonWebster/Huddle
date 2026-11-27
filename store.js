@@ -124,6 +124,25 @@ CREATE TABLE IF NOT EXISTS phone_cells (
   number TEXT NOT NULL,
   linked_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS phone_ledger (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  amount BIGINT NOT NULL,
+  status TEXT NOT NULL,
+  detail TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS phone_ledger_user ON phone_ledger (user_id, created_at);
+CREATE TABLE IF NOT EXISTS phone_numbers (
+  user_id TEXT PRIMARY KEY,
+  number TEXT NOT NULL,
+  sid TEXT NOT NULL,
+  paid_until BIGINT NOT NULL,
+  created_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -488,7 +507,7 @@ async function phoneAdd(userId, number, kind, { body = null, mediaId = null, dur
   return phoneOut(row);
 }
 const phoneOut = (r) => ({ id: r.id, number: r.number, kind: r.kind, body: r.body || "", mediaId: r.media_id || null,
-  duration: r.duration == null ? null : Number(r.duration), status: r.status || null, at: Number(r.created_at), unread: !r.read_at });
+  duration: r.duration == null ? null : Number(r.duration), status: r.status || null, sid: r.sid || null, at: Number(r.created_at), unread: !r.read_at });
 async function phoneSetStatus(sid, status) {
   const r = await one("SELECT * FROM phone_log WHERE sid = $1", [sid]);
   if (!r) return null;
@@ -578,6 +597,59 @@ async function unlinkCell(userId) {
   await q("DELETE FROM phone_cells WHERE user_id = $1", [userId]);
 }
 
+// ---------- Phone credit (see billing.js): money added, and what each call cost ----------
+// amount is in millionths of a dollar (+ for money added, - for a call). kind: topup | call.
+// status: pending (waiting for Stripe / Twilio's price) | done | failed.
+const ledgerOut = (r) => ({ id: r.id, userId: r.user_id, kind: r.kind, ref: r.ref, amount: Number(r.amount), status: r.status,
+  detail: (() => { try { return JSON.parse(r.detail || "{}"); } catch { return {}; } })(), at: Number(r.created_at) });
+async function ledgerAdd(userId, kind, ref, amount, status, detail = {}) {
+  const row = { id: id(), user_id: userId, kind, ref, amount: Math.round(amount), status, detail: JSON.stringify(detail), created_at: now() };
+  await q(`INSERT INTO phone_ledger (id, user_id, kind, ref, amount, status, detail, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`, [row.id, userId, kind, ref, row.amount, status, row.detail, row.created_at]);
+  return ledgerOut(row);
+}
+async function ledgerByRef(kind, ref) {
+  const r = await one("SELECT * FROM phone_ledger WHERE kind = $1 AND ref = $2", [kind, ref]);
+  return r ? ledgerOut(r) : null;
+}
+async function ledgerUpdate(rowId, { amount, status, detail }) {
+  await q("UPDATE phone_ledger SET amount = $1, status = $2, detail = $3, updated_at = $4 WHERE id = $5",
+    [Math.round(amount), status, JSON.stringify(detail || {}), now(), rowId]);
+}
+async function ledgerPending(kind, limit = 50) {
+  return (await q("SELECT * FROM phone_ledger WHERE kind = $1 AND status = 'pending' ORDER BY created_at LIMIT $2", [kind, limit])).map(ledgerOut);
+}
+async function ledgerBalance(userId) {
+  const r = await one("SELECT COALESCE(SUM(amount), 0) AS n FROM phone_ledger WHERE user_id = $1 AND status = 'done'", [userId]);
+  return Number((r && r.n) || 0);
+}
+async function ledgerRecent(userId, limit = 100) {
+  return (await q("SELECT * FROM phone_ledger WHERE user_id = $1 AND status <> 'failed' ORDER BY created_at DESC LIMIT $2", [userId, limit])).map(ledgerOut);
+}
+
+// ---------- Personal Huddle numbers (a Twilio number of their own, paid monthly from credit) ----------
+const numOut = (r) => r && { userId: r.user_id, number: r.number, sid: r.sid, paidUntil: Number(r.paid_until), at: Number(r.created_at) };
+async function numberOf(userId) {
+  return numOut(await one("SELECT * FROM phone_numbers WHERE user_id = $1", [userId]));
+}
+async function numberUser(number) {
+  const r = number && await one("SELECT user_id FROM phone_numbers WHERE number = $1", [number]);
+  return r ? r.user_id : null;
+}
+async function saveNumber(userId, number, sid, paidUntil) {
+  await q("DELETE FROM phone_numbers WHERE user_id = $1", [userId]);
+  await q("INSERT INTO phone_numbers (user_id, number, sid, paid_until, created_at) VALUES ($1, $2, $3, $4, $5)", [userId, number, sid, paidUntil, now()]);
+}
+async function setNumberPaidUntil(userId, paidUntil) {
+  await q("UPDATE phone_numbers SET paid_until = $1 WHERE user_id = $2", [paidUntil, userId]);
+}
+async function numbersDue(t) {
+  return (await q("SELECT * FROM phone_numbers WHERE paid_until < $1", [t])).map(numOut);
+}
+async function deleteNumber(userId) {
+  await q("DELETE FROM phone_numbers WHERE user_id = $1", [userId]);
+}
+
 // ---------- Small saved settings, and notification subscriptions ----------
 async function getSetting(key) {
   const r = await one("SELECT value FROM app_settings WHERE key = $1", [key]);
@@ -608,6 +680,8 @@ async function userByName(name) {
 }
 
 module.exports = {
+  numberOf, numberUser, saveNumber, setNumberPaidUntil, numbersDue, deleteNumber,
+  ledgerAdd, ledgerByRef, ledgerUpdate, ledgerPending, ledgerBalance, ledgerRecent,
   cellOf, cellUser, linkedCells, linkCell, unlinkCell,
   contacts, contactName, contactCount, saveContact, deleteContact,
   phoneCalls, getSetting, setSetting, savePushSub, pushSubs, deletePushSub,

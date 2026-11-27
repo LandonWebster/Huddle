@@ -127,6 +127,30 @@ With Twilio set up, Huddle has its own phone number for calls (texting is turned
 - Calls from a number go to whoever in Huddle last talked to it; new numbers go to
   `PHONE_OWNER` (a Huddle account name) or else whoever used the phone last.
 
+### Paying for phone calls (optional)
+
+Set `STRIPE_SECRET_KEY` in Render and phone calls become pay-as-you-go for everyone except the
+phone's owner (`PHONE_OWNER`, or the first person who dialed). Without it, calls stay free.
+Code: `billing.js`.
+- **Phone balance** (Phone screen): add $1, $5, $10 or $20 with Stripe Checkout. Stripe's card
+  fee is added on top, and after paying the exact fee Stripe reports comes out, so the credit is
+  what they asked for (give or take a cent).
+- **Exact call costs:** each call is priced from Twilio's own price for the call and its legs
+  (plus the voicemail recording), about 2 cents a minute, and taken off the balance a minute
+  or two after it ends. Costs show in the call log and the balance history.
+- **At $0:** they can't call out, and calls to them go straight to voicemail. Calls are cut
+  off when the balance runs out (the call's time limit is set from the balance).
+- **Own Huddle number:** each paying person gets their own Twilio number ($1.15 a month from
+  their balance). The first charge is exactly the first month + $1.00 call credit + the card
+  fee (e.g. $2.53). They forward their cell's unanswered calls to it (codes shown in the app),
+  so their cell rings first and missed calls ring them in Huddle. Each month the next month is
+  taken from their balance; if it can't be, they get 7 days to add money, then the number is
+  given back to Twilio.
+- Settings: `PHONE_CARD_FEE` (`customer` default, or `owner` to cover the fee yourself),
+  `PHONE_NUMBER_MONTHLY` (1.15), `PHONE_RATE_OUT` / `PHONE_RATE_IN` (backup per-minute rates
+  when Twilio hasn't priced a call after 2 hours).
+- Stripe test mode: use an `sk_test_...` key and card 4242 4242 4242 4242.
+
 Setup (one time):
 1. Make a Twilio account, upgrade it, and buy one local number with Voice (~$1.15/month).
 2. Copy the **Account SID** and **Auth Token** into Render as `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.

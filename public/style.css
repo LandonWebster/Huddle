@@ -1054,3 +1054,20 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .ph-cell code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #22d3ee; user-select: all; -webkit-user-select: all; }
 .ph-steps code { font-size: 16px; }
 .ph-cell .btn { width: 100%; justify-content: center; }
+
+/* Phone balance */
+.ph-bal-row.low { border-color: rgba(248,113,113,.45); }
+.ph-balance { font-size: 44px; font-weight: 800; text-align: center; margin: 6px 0 0; }
+.ph-center { text-align: center; }
+.ph-test { padding: 10px 12px; border-radius: 12px; background: rgba(250,204,21,.1); color: #fde68a; }
+.ph-amounts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ph-amounts .btn { flex-direction: column; gap: 2px; padding: 12px 8px; font-size: 16px; }
+.ph-amounts .btn small { font-size: 11px; font-weight: 500; opacity: .85; }
+.ph-log-head { margin: 10px 2px 0; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.ph-bill-list li { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.ph-bill-list .ch-row { flex: 1; min-width: 0; }
+.ph-amt { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ph-amt.plus { color: #4ade80; }
+
+.ph-step { font-weight: 700; color: #22d3ee; }
+.ph-giveup { margin-top: 18px; }
