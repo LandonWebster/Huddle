@@ -477,9 +477,22 @@
     }
     // Optional: your cell as caller ID.
     let cellHtml = "";
-    if (j.cell) {
+    if (j.cell && j.callerReady !== false) {
       cellHtml = `<p class="ph-ok">&#10003; Your cell <b>${esc(pretty(j.cell))}</b> is linked. It can show as your caller ID (pick it under "Calls show").</p>
         <button class="btn" type="button" data-act="unlink">Unlink this cell</button>`;
+    } else if (j.cell && !(j.pending && !j.pending.failed)) {
+      cellHtml = `<p class="ph-ok">&#10003; Your cell <b>${esc(pretty(j.cell))}</b> is linked.</p>
+        <p class="ph-small">To also show it as your caller ID, the phone company needs one quick call: we call your cell and you type the code shown here.</p>
+        <button class="btn" type="button" data-act="callcell">Call me with a code</button>
+        <button class="btn" type="button" data-act="unlink">Unlink this cell</button>`;
+    } else if (j.pending && !j.pending.failed && j.pending.via === "text") {
+      cellHtml = `<p>We texted a 6-digit code to <b>${esc(pretty(j.pending.number))}</b>. Type it here:</p>
+        <form class="ph-contact ph-codeform">
+          <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" required aria-label="Code from the text">
+          <p class="ch-err"></p>
+          <button class="btn primary" type="submit">Link my cell</button>
+        </form>
+        <button class="btn" type="button" data-act="restart">Use a different number</button>`;
     } else if (j.pending && !j.pending.failed) {
       cellHtml = `<p>We're calling <b>${esc(pretty(j.pending.number))}</b> now. Answer it and type this code on the keypad:</p>
         <p class="ph-code">${esc(j.pending.code)}</p>
@@ -487,12 +500,15 @@
         <button class="btn" type="button" data-act="restart">Use a different number</button>`;
       cellPoll = setTimeout(async () => { try { renderCell(await api("GET", "cell")); } catch {} }, 3000);
     } else {
-      cellHtml = `<p class="ph-small">Want people you call from Huddle to see your cell number? Prove the cell is yours: we call it and you type a code.</p>
+      const known = (j.verifiedCells || []).map((n) => `<button class="btn primary" type="button" data-act="linkv" data-n="${esc(n)}">Link ${esc(pretty(n))}</button>`).join("");
+      cellHtml = (known ? `<p class="ph-small">Already verified in your Twilio account, so no code needed:</p>${known}<p class="ph-small">Or link a different cell:</p>` : "") +
+        `<p class="ph-small">Want people you call from Huddle to see your cell number? Prove the cell is yours with a code: we either call your cell (you type the code shown here on the keypad) or text you a code (you type it here).</p>
         ${j.pending && j.pending.failed ? '<p class="ch-err">That didn\'t work. Check the number and try again.</p>' : ""}
         <form class="ph-contact">
           <label>Your cell number<input name="number" type="tel" inputmode="tel" maxlength="22" placeholder="(555) 123-4567" value="${esc(j.pending ? pretty(j.pending.number) : "")}" required></label>
           <p class="ch-err"></p>
-          <button class="btn" type="submit">Call me with a code</button>
+          <button class="btn" type="submit" data-via="call">Call me with a code</button>
+          <button class="btn" type="submit" data-via="text">Text me a code</button>
         </form>`;
     }
     html += `<h3 class="ph-log-head">Your cell as caller ID</h3>` + cellHtml;
@@ -527,16 +543,39 @@
       try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked"); } catch (x) { toast(x.message, 5000); }
     });
     on('[data-act="restart"]', () => renderCell({ ...j, pending: null }));
-    const form = box.querySelector("form.ph-contact");
+    on('[data-act="callcell"]', async (e) => {
+      e.target.disabled = true;
+      try { renderCell(await api("POST", "cell", { number: j.cell })); }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
+    });
+    box.querySelectorAll('[data-act="linkv"]').forEach((b) => b.onclick = async () => {
+      b.disabled = true;
+      try { renderCell(await api("POST", "cell", { action: "link-verified", number: b.dataset.n })); toast("Cell linked"); }
+      catch (x) { toast(x.message, 5000); b.disabled = false; }
+    });
+    const codeForm = box.querySelector("form.ph-codeform");
+    if (codeForm) {
+      const err = codeForm.querySelector(".ch-err");
+      codeForm.code.focus();
+      codeForm.onsubmit = async (e) => {
+        e.preventDefault();
+        codeForm.querySelector("button").disabled = true;
+        try { renderCell(await api("POST", "cell", { action: "code", code: codeForm.code.value })); toast("Cell linked"); }
+        catch (x) { err.textContent = x.message; codeForm.querySelector("button").disabled = false; }
+      };
+    }
+    const form = box.querySelector("form.ph-contact:not(.ph-codeform)");
     if (form) {
       const err = form.querySelector(".ch-err");
       form.onsubmit = async (e) => {
         e.preventDefault();
         const n = normalize(form.number.value);
         if (!n) { err.textContent = "Type a 10-digit phone number"; return; }
-        form.querySelector("button").disabled = true;
-        try { renderCell(await api("POST", "cell", { number: n })); }
-        catch (x) { err.textContent = x.message; form.querySelector("button").disabled = false; }
+        const via = (e.submitter && e.submitter.dataset.via) || "call";
+        const btns = form.querySelectorAll("button");
+        btns.forEach((b) => b.disabled = true);
+        try { renderCell(await api("POST", "cell", via === "text" ? { action: "text", number: n } : { number: n })); }
+        catch (x) { err.textContent = x.message; btns.forEach((b) => b.disabled = false); }
       };
     }
   }
