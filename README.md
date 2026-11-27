@@ -97,3 +97,23 @@ photos, voice notes, hold-to-pin, and a Pinned list in the ☰ menu that jumps b
 message. Live while the app is open; no notifications. Data lives in Postgres: set
 `DATABASE_URL` (a free Neon database works). Without it, chats are kept in memory and lost on
 restart. Code: `api.js`, `store.js`, `public/chats.js`.
+
+## Calling real phone numbers (Twilio)
+
+In a call, the phone button dials a real phone number (US and Canada). Everyone in the call
+hears the phone, and the phone hears everyone: the person who dialed mixes the audio in their
+browser. Calls only go out; Huddle never rings or shows anything outside the app. The button
+only appears once this is set up, and only signed-in people can use it.
+
+Setup (one time):
+1. Make a Twilio account at twilio.com and buy one phone number with Voice (about $1.15/month).
+2. In the Twilio Console home page, copy the **Account SID** and **Auth Token**.
+3. In Render, add them as `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`, then save (it redeploys).
+
+The server makes the rest (a Twilio API key and a "Huddle phone calls" TwiML app) on the first
+call. Costs: roughly 1.4¢ a minute for the phone leg plus about 0.4¢ a minute for the app leg
+(US). Trial accounts can only call numbers verified in Twilio and play a short trial message.
+
+Limits (optional env vars): `PHONE_ALLOW_PREFIXES` (default `+1`), `PHONE_MAX_MINUTES`
+(default 30 per call), `PHONE_CALLS_PER_DAY` (default 20 per person), `TWILIO_PHONE_NUMBER`
+(caller ID, default the first number in the account).

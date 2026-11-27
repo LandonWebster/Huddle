@@ -8,10 +8,12 @@ const { WebSocketServer } = require("ws");
 const { GAMES } = require("./games");
 const store = require("./store");
 const api = require("./api");
+const phone = require("./phone");
 
 const PORT = process.env.PORT || 3000;
 const MAX_PER_ROOM = Number(process.env.MAX_PER_ROOM || 8);
 const PUBLIC_DIR = path.join(__dirname, "public");
+const TWILIO_JS = path.join(__dirname, "node_modules/@twilio/voice-sdk/dist/twilio.min.js");
 // Changes on every deploy, so open copies of the app know to reload.
 const VERSION = process.env.RENDER_GIT_COMMIT || String(Date.now());
 
@@ -74,11 +76,21 @@ const server = http.createServer((req, res) => {
   if (url.pathname === "/config") {
     iceServers().then((ice) => {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-      res.end(JSON.stringify({ iceServers: ice, maxPerRoom: MAX_PER_ROOM, relay: hasTurn() }));
+      res.end(JSON.stringify({ iceServers: ice, maxPerRoom: MAX_PER_ROOM, relay: hasTurn(), phone: phone.enabled() }));
     });
     return;
   }
   if (url.pathname.startsWith("/api/")) return api.handle(req, res, url);
+  // Twilio asks here what to do with a phone call someone started from the app.
+  if (url.pathname === "/twilio/voice" && req.method === "POST") return phone.voiceWebhook(req, res);
+  // Twilio's calling library for the browser, only loaded when someone calls a phone.
+  if (url.pathname === "/vendor/twilio.min.js") {
+    return fs.readFile(TWILIO_JS, (err, data) => {
+      if (err) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "public, max-age=86400" });
+      res.end(data);
+    });
+  }
   if (url.pathname === "/version") {
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     return res.end(JSON.stringify({ version: VERSION }));
@@ -264,6 +276,8 @@ function sanitizeState(s) {
   // Profile look for the camera-off tile: an uploaded photo id and an avatar color name.
   if (typeof s.photo === "string" && /^[A-Za-z0-9_-]{6,40}$/.test(s.photo)) out.photo = s.photo;
   if (typeof s.color === "string" && /^[a-z]{3,10}$/.test(s.color)) out.color = s.color;
+  // A phone number they added to the call, shown on their tile like "phone ••• 1234".
+  if (typeof s.phone === "string" && /^\d{4}$/.test(s.phone)) out.phone = s.phone;
   return out;
 }
 

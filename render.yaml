@@ -27,3 +27,8 @@ services:
       # Lets Pip really talk back (a Claude API key from console.anthropic.com).
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Calling real phone numbers from a call (Twilio): Account SID and Auth Token from twilio.com.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false

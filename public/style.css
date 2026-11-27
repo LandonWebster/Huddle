@@ -966,3 +966,17 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .bc-badge b { font-size: 12.5px; }
 .bc-badge small { font-size: 11px; color: var(--muted); }
 .pip-mute[hidden] { display: none !important; }
+
+/* ---------- Calling a phone number ---------- */
+.phone-pop form, .phone-live { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.phone-note, .phone-status { color: var(--muted); font-size: 13px; }
+.phone-num { font-size: 20px; font-variant-numeric: tabular-nums; }
+.phone-row { display: flex; gap: 8px; }
+.phone-row input { flex: 1; min-width: 0; font-size: 18px; }
+.phone-row .btn { flex: none; }
+.phone-live .phone-row .btn { flex: 1; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.phone-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.phone-keys .btn { padding: 10px 0; font-size: 18px; font-variant-numeric: tabular-nums; }
+.phone-err:empty { display: none; }
+.tile .label .phone-tag { margin-left: 6px; color: var(--accent-2); font-size: .9em; white-space: nowrap; }

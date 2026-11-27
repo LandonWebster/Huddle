@@ -3,6 +3,7 @@
 // notifications).
 const store = require("./store");
 const pipAi = require("./pip-ai");
+const phone = require("./phone");
 
 const MAX_IMAGE = 6 * 1024 * 1024;
 const MAX_VOICE = 4 * 1024 * 1024;
@@ -171,6 +172,12 @@ async function handle(req, res, url) {
     }
     if (route === "POST /pip") {
       const r = await pipAi.reply(me, await readJson(req));
+      return json(res, r.status, r.body);
+    }
+    // A short-lived pass for calling a real phone number from a call (Twilio).
+    if (route === "POST /phone") {
+      if (tooManyTries("phone:" + me.id)) return json(res, 429, { error: "Too many tries. Wait a few minutes." });
+      const r = await phone.tokenFor(me, req);
       return json(res, r.status, r.body);
     }
     if (route === "POST /logout") { await store.endSession(tokenOf(req)); return json(res, 200, {}); }
