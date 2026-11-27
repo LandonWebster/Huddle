@@ -31,6 +31,7 @@ const crypto = require("crypto");
 const store = require("./store");
 const live = () => require("./api"); // push + presence (required late: api.js requires this file)
 const { notify } = require("./notify");
+const billing = require("./billing");
 
 const env = (k, d) => (process.env[k] || d || "").trim();
 const SID = () => env("TWILIO_ACCOUNT_SID");
@@ -61,6 +62,7 @@ async function twilio(method, path, form) {
   if (!r.ok) throw Object.assign(new Error(j.message || `Twilio said ${r.status}`), { status: r.status, code: j.code });
   return j;
 }
+billing.init(twilio);
 
 // ---------- One-time setup, done on the first phone call after each restart ----------
 let setup = null; // Promise<{ keySid, keySecret, appSid, callerId, voiceUrl }>
@@ -112,7 +114,7 @@ async function doSetup(base) {
   const keys = await twilio("GET", "/Keys.json?PageSize=100");
   for (const k of keys.keys || []) if (k.friendly_name === KEY_NAME) await twilio("DELETE", `/Keys/${k.sid}.json`).catch(() => {});
   const key = await twilio("POST", "/Keys.json", { FriendlyName: KEY_NAME });
-  return { keySid: key.sid, keySecret: key.secret, appSid: app.sid, callerId, voiceUrl, base, owned: !!owned };
+  return { keySid: key.sid, keySecret: key.secret, appSid: app.sid, callerId, voiceUrl, base, owned: !!owned, ownedSid: owned ? owned.sid : null };
 }
 
 // ---------- Access token (a signed JWT, the same thing Twilio's own library makes) ----------
@@ -187,7 +189,15 @@ async function tokenFor(user, req, body = {}) {
   const identity = identityOf(user);
   const line = await isLineUser(user).catch(() => false);
   if (body.listen && !line) return { status: 200, body: { line: false } };
+  // 911 is never blocked: no daily limit, no balance check, nothing saved about who dials.
+  if (body.emergency) {
+    try { const s = await ready(req); return { status: 200, body: { token: accessToken(s, identity, 3600), callerId: s.callerId, line } }; }
+    catch (e) { return fail(e); }
+  }
   if (!body.listen && overLimit(identity, false)) return { status: 429, body: { error: `You've made ${PER_DAY()} phone calls today. Try again tomorrow.` } };
+  if (!body.listen && (await payer(user.id)) && (await billing.minutesLeft(user.id, "out")) < 1) {
+    return { status: 402, body: { error: "Add money to your phone balance first (Phone > Balance)", needsCredit: true } };
+  }
   // Whoever dials out last is the default person for call-backs from new numbers. The first
   // person to ever dial out is the phone's owner (unless PHONE_OWNER says otherwise).
   if (!body.listen) {
@@ -209,6 +219,25 @@ async function isOwner(user) {
   const id = await store.getSetting("phone_owner_id");
   return !id || id === user.id;
 }
+async function ownerById(userId) {
+  const u = userId && await store.userById(userId);
+  return u ? isOwner({ id: userId, username: u.username }) : false;
+}
+// Does this person pay for their phone calls? (Everyone but the owner, once billing is on.)
+async function payer(userId) {
+  return billing.active() && !(await ownerById(userId).catch(() => false));
+}
+// The Huddle number this person uses: their own (paid) number, else the main one.
+async function huddleNumberFor(userId, s) {
+  const mine = await store.numberOf(userId).catch(() => null);
+  return mine ? mine.number : s.callerId;
+}
+// Longest call (seconds) this person gets: the usual limit, or less if their balance is low.
+async function callLimit(userId, kind) {
+  let secs = MAX_MINUTES() * 60;
+  if (await payer(userId)) secs = Math.min(secs, (await billing.minutesLeft(userId, kind)) * 60);
+  return secs;
+}
 let verified = { list: [], at: 0 };
 async function verifiedNumbers() {
   if (Date.now() - verified.at < 5 * 60 * 1000) return verified.list;
@@ -219,7 +248,7 @@ async function verifiedNumbers() {
 // Each person can show their own linked cell (proven theirs, and verified in Twilio). The owner
 // can also show verified numbers nobody else has linked (like the cell they verified by hand).
 async function callerOptions(user, s) {
-  const opts = [{ number: s.callerId, label: "Huddle number" }];
+  const opts = [{ number: await huddleNumberFor(user.id, s), label: "Huddle number" }];
   try {
     const list = await verifiedNumbers();
     const mine = await store.cellOf(user.id);
@@ -238,14 +267,20 @@ async function callerIdFor(userId, s) {
   const pick = await store.getSetting("callerid:" + userId);
   if (pick && options.some((o) => o.number === pick)) return pick;
   if (!pick && options.length > 1) return options[1].number;
-  return s.callerId;
+  return options[0].number;
 }
 
 // Everything else under /api/phone/...: the Phone screen (calls and voicemails).
 async function appRoute(method, sub, user, url, body, req) {
   if (!enabled()) return { status: 404, body: { error: "Phone isn't set up yet" } };
+  if (sub === "billing") {
+    let s;
+    try { s = await ready(req); } catch (e) { return fail(e); }
+    return billing.route(method, user, body || {}, s.base, !(await payer(user.id)));
+  }
   if (method === "GET" && sub === "threads") {
-    return { status: 200, body: { threads: await store.phoneThreads(user.id), unread: await store.phoneUnread(user.id), number: setup && !setup.failed ? (await setup).callerId : null } };
+    const s = setup && !setup.failed ? await setup.catch(() => null) : null;
+    return { status: 200, body: { threads: await store.phoneThreads(user.id), unread: await store.phoneUnread(user.id), number: s ? await huddleNumberFor(user.id, s) : null } };
   }
   if (method === "GET" && sub === "thread") {
     const number = normalize(url.searchParams.get("n"));
@@ -287,6 +322,7 @@ async function appRoute(method, sub, user, url, body, req) {
     return { status: 200, body: { contacts: await store.contacts(user.id) } };
   }
   if (sub === "cell") return cellRoute(method, user, body, req);
+  if (sub === "e911") return e911Route(method, user, body || {}, req);
   if (method === "GET" && sub === "calls") return { status: 200, body: { calls: await store.phoneCalls(user.id) } };
   // The app's phone line is connected and can ring (so a waiting caller can be put through).
   if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
@@ -318,7 +354,7 @@ async function cellRoute(method, user, body, req) {
     const number = normalize(body.number);
     const why = allowed(number);
     if (why) return { status: 400, body: { error: why } };
-    if (number === s.callerId) return { status: 400, body: { error: "That's the Huddle number. Type your own cell." } };
+    if (number === s.callerId || (await store.numberUser(number))) return { status: 400, body: { error: "That's a Huddle number. Type your own cell." } };
     if (overLimit("v:" + user.id, true, 8)) return { status: 429, body: { error: "Too many tries today. Try again tomorrow." } };
     try {
       const v = await twilio("POST", "/OutgoingCallerIds.json", {
@@ -340,7 +376,11 @@ async function cellRoute(method, user, body, req) {
   if (check && Date.now() - check.at > CHECK_MS) cellChecks.delete(user.id);
   const pending = cellChecks.get(user.id);
   return { status: 200, body: {
-    cell: await store.cellOf(user.id), huddleNumber: s.callerId,
+    cell: await store.cellOf(user.id),
+    ownNumber: !!(await store.numberOf(user.id)),
+    needsNumber: !(await store.numberOf(user.id)) && (await payer(user.id)),
+    // Where to forward: your own Huddle number. People who pay need one first; the owner uses the main one.
+    huddleNumber: (await store.numberOf(user.id)) ? await huddleNumberFor(user.id, s) : (await payer(user.id)) ? null : s.callerId,
     pending: pending ? { number: pending.number, code: pending.code, failed: !!pending.failed } : null,
   } };
 }
@@ -364,11 +404,70 @@ function canRing(userId) {
 }
 // "Mom" if this person saved the number as a contact, else "(555) 123-4567".
 const nameOf = async (userId, number) => (await store.contactName(userId, number).catch(() => null)) || pretty(number);
-const ringXml = (s, userId, from, name, viaCell) => {
+const ringXml = (s, userId, from, name, viaCell, limit = MAX_MINUTES() * 60) => {
   const after = `${s.base}/twilio/after?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`;
-  return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/>${name ? `<Parameter name="name" value="${xml(name)}"/>` : ""}${viaCell ? '<Parameter name="via" value="cell"/>' : ""}</Client></Dial>`;
+  return `<Dial timeout="25" timeLimit="${limit}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/>${name ? `<Parameter name="name" value="${xml(name)}"/>` : ""}${viaCell ? '<Parameter name="via" value="cell"/>' : ""}</Client></Dial>`;
 };
 const HOLD_TRIES = 6; // about 20 seconds
+
+// ---------- 911 ----------
+// A 911 call shows the dispatcher the emergency address registered on the calling number (Twilio
+// "Emergency Calling"). Each person registers their own address on their own Huddle number; the
+// owner registers theirs on the main number. People without their own number call from the main
+// number (the dispatcher may see the wrong address, so the app tells them to say where they are).
+// 911 calls are never blocked or charged to the person: no balance, limit or time checks.
+async function e911NumberFor(userId, s) {
+  const mine = await store.numberOf(userId).catch(() => null);
+  if (mine) return { number: mine.number, sid: mine.sid, own: true };
+  if (await ownerById(userId).catch(() => false)) return s.ownedSid ? { number: s.callerId, sid: s.ownedSid, own: true } : null;
+  return null;
+}
+async function emergencyDial(s, userId, short) {
+  let from = s.callerId;
+  try {
+    const reg = await store.e911Of(userId);
+    const n = await e911NumberFor(userId, s);
+    if (reg && n && reg.number === n.number) from = n.number;
+    else if (n) from = n.number;
+  } catch {}
+  console.log(short === "911" ? "EMERGENCY CALL (911)" : "911 address test call (933)");
+  store.phoneAdd(userId, short, "call_out", { status: "emergency" }).then(() => pushTo(userId, { type: "phone-update", number: short })).catch(() => {});
+  return `<Dial callerId="${xml(from)}" answerOnBridge="true"><Number>${short}</Number></Dial>`;
+}
+const E911_FIELDS = { name: 60, street: 100, street2: 60, city: 60, region: 2, postal: 10 };
+async function e911Route(method, user, body, req) {
+  let s;
+  try { s = await ready(req); } catch (e) { return fail(e); }
+  const n = await e911NumberFor(user.id, s);
+  let reg = await store.e911Of(user.id);
+  if (method === "POST") {
+    if (!n) return { status: 400, body: { error: "Get your own Huddle number first, so 911 can show your address" } };
+    const a = {};
+    for (const [k, max] of Object.entries(E911_FIELDS)) a[k] = String(body[k] || "").replace(/\s+/g, " ").trim().slice(0, max);
+    a.region = a.region.toUpperCase();
+    if (!a.name || !a.street || !a.city || !/^[A-Z]{2}$/.test(a.region) || !/^\d{5}(-\d{4})?$/.test(a.postal)) {
+      return { status: 400, body: { error: "Fill in your name, street, city, 2-letter state and ZIP code" } };
+    }
+    const form = { CustomerName: a.name, Street: a.street, StreetSecondary: a.street2, City: a.city, Region: a.region, PostalCode: a.postal, EmergencyEnabled: "true", AutoCorrectAddress: "false" };
+    let addressSid = reg && reg.addressSid;
+    try {
+      if (addressSid) await twilio("POST", `/Addresses/${addressSid}.json`, form);
+      else addressSid = (await twilio("POST", "/Addresses.json", { ...form, IsoCountry: "US", FriendlyName: "Huddle 911" })).sid;
+      await twilio("POST", `/IncomingPhoneNumbers/${n.sid}.json`, { EmergencyAddressSid: addressSid });
+    } catch (e) {
+      if (addressSid && !(reg && reg.addressSid)) twilio("DELETE", `/Addresses/${addressSid}.json`).catch(() => {});
+      const msg = e.code === 21629 ? `Check the address. Twilio suggests: ${e.message}` : e.code === 21628 ? "That address couldn't be found. Check the street, city, state and ZIP." : "Couldn't save the address right now. Try again.";
+      return { status: 400, body: { error: msg } };
+    }
+    await store.saveE911(user.id, addressSid, n.number, a);
+    reg = await store.e911Of(user.id);
+  }
+  let status = null;
+  if (reg && n && reg.number === n.number) {
+    try { status = (await twilio("GET", `/IncomingPhoneNumbers/${n.sid}.json`)).emergency_address_status || null; } catch {}
+  }
+  return { status: 200, body: { number: n ? n.number : null, mainNumber: s.callerId, address: reg && n && reg.number === n.number ? reg.address : null, status } };
+}
 
 // ---------- Twilio webhooks (/twilio/...) ----------
 // Twilio signs each webhook: base64(HMAC-SHA1(auth token, url + sorted key/values)).
@@ -385,14 +484,14 @@ function twiml(res, inner) {
 }
 
 // Who gets a call from this number: whoever in Huddle last talked to it, else the
-// PHONE_OWNER account, else whoever used the phone last.
+// PHONE_OWNER account, else the phone's owner (first person to dial), else whoever used it last.
 async function ownerFor(number) {
   const known = await store.phoneUserFor(number, true);
   if (known) return known;
   const owner = env("PHONE_OWNER");
   const u = owner && (await store.userByName(owner));
   if (u) return u.id;
-  return (await store.phoneUserFor(null, false)) || (await store.getSetting("phone_user"));
+  return (await store.getSetting("phone_owner_id")) || (await store.phoneUserFor(null, false)) || (await store.getSetting("phone_user"));
 }
 
 // Each route: check Twilio really sent it, then answer. Everything Twilio calls lives here.
@@ -400,21 +499,27 @@ const routes = {
   // A call the app started (outgoing).
   async voice(s, p) {
     const identity = userIdOf(p.From);
+    // 911 (and 933, Twilio's free address test) go through before every other check.
+    const short = String(p.To || "").replace(/\D/g, "");
+    if (identity && (short === "911" || short === "933")) return emergencyDial(s, identity, short);
     const to = normalize(p.To);
     const why = allowed(to);
     if (!identity || why) return `<Say>${xml(why || "Sorry, that call can't be made.")}</Say><Hangup/>`;
     if (overLimit("u" + identity, true)) return "<Say>You've reached today's phone call limit.</Say><Hangup/>";
+    const limit = await callLimit(identity, "out");
+    if (limit < 60) return `<Say>${xml("Add money to your Huddle phone balance to make calls.")}</Say><Hangup/>`;
     console.log(`Phone call to ${to.slice(0, -4)}••••`);
+    if (await payer(identity)) await billing.trackCall(identity, p.CallSid, to, "out");
     const done = `${s.base}/twilio/out-done?u=${encodeURIComponent(identity)}&n=${encodeURIComponent(to)}`;
     const callerId = await callerIdFor(identity, s).catch(() => s.callerId);
-    return `<Dial callerId="${xml(callerId)}" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(done)}"><Number>${xml(to)}</Number></Dial>`;
+    return `<Dial callerId="${xml(callerId)}" timeLimit="${limit}" answerOnBridge="true" action="${xml(done)}"><Number>${xml(to)}</Number></Dial>`;
   },
   // The outgoing call ended: save it in the Phone screen.
   async "out-done"(s, p, q) {
     const userId = q.get("u"), to = normalize(q.get("n"));
     if (userId && to) {
       const ok = p.DialCallStatus === "completed";
-      await store.phoneAdd(userId, to, "call_out", { duration: ok ? Number(p.DialCallDuration || 0) : 0, status: p.DialCallStatus || null });
+      await store.phoneAdd(userId, to, "call_out", { duration: ok ? Number(p.DialCallDuration || 0) : 0, status: p.DialCallStatus || null, sid: p.CallSid || null });
       pushTo(userId, { type: "phone-update", number: to });
     }
     return "<Hangup/>";
@@ -425,20 +530,27 @@ const routes = {
     const from = normalize(p.From) || String(p.From || "unknown").slice(0, 20);
     // Forwarded from someone's linked cell? Then it's their call. (Most carriers say which cell
     // forwarded it; when they don't, it goes to whoever last talked to the caller.)
+    // Called someone's own Huddle number? Then it's theirs, whoever is calling.
+    const numberOwner = await store.numberUser(normalize(p.To));
     const fwd = normalize(p.ForwardedFrom);
-    const cellOwner = fwd && fwd !== s.callerId ? await store.cellUser(fwd) : null;
-    const userId = cellOwner || await ownerFor(from);
+    const cellOwner = numberOwner ? null : fwd && fwd !== s.callerId ? await store.cellUser(fwd) : null;
+    const userId = numberOwner || cellOwner || await ownerFor(from);
     console.log(`Incoming phone call${p.ForwardedFrom ? " (forwarded" + (cellOwner ? " from a linked cell)" : ")") : ""}`);
     if (!userId) return `<Say>${xml("Sorry, nobody can take this call right now.")}</Say><Hangup/>`;
+    // People who pay for calls: track this one, and send it to voicemail if their balance is empty.
+    if (await payer(userId)) {
+      await billing.trackCall(userId, p.CallSid, from, "in");
+      if ((await callLimit(userId, "in")) < 60) return voicemail(s, userId, from);
+    }
     const name = await store.contactName(userId, from).catch(() => null);
     notify(userId, { kind: "call", title: name || pretty(from), body: cellOwner ? "Calling your cell" : "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
-    if (canRing(userId)) return ringXml(s, userId, from, name, !!cellOwner);
+    if (canRing(userId)) return ringXml(s, userId, from, name, !!cellOwner, await callLimit(userId, "in"));
     return `<Say>${xml("Please hold while I connect you.")}</Say><Redirect>${xml(`${s.base}/twilio/hold?t=1&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}${cellOwner ? "&c=1" : ""}`)}</Redirect>`;
   },
   // Waiting for Huddle to open (checked every few seconds).
   async hold(s, p, q) {
     const userId = q.get("u"), from = q.get("n"), t = Number(q.get("t")) || 1;
-    if (canRing(userId)) return ringXml(s, userId, from, await store.contactName(userId, from).catch(() => null), q.get("c") === "1");
+    if (canRing(userId)) return ringXml(s, userId, from, await store.contactName(userId, from).catch(() => null), q.get("c") === "1", await callLimit(userId, "in"));
     if (t >= HOLD_TRIES) return voicemail(s, userId, from);
     return `<Pause length="3"/><Redirect>${xml(`${s.base}/twilio/hold?t=${t + 1}&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}${q.get("c") === "1" ? "&c=1" : ""}`)}</Redirect>`;
   },
@@ -446,7 +558,7 @@ const routes = {
   async after(s, p, q) {
     const userId = q.get("u"), from = q.get("n");
     if (p.DialCallStatus === "completed") {
-      await store.phoneAdd(userId, from, "call_in", { duration: Number(p.DialCallDuration || 0) });
+      await store.phoneAdd(userId, from, "call_in", { duration: Number(p.DialCallDuration || 0), sid: p.CallSid || null });
       pushTo(userId, { type: "phone-update", number: from });
       return "<Hangup/>";
     }
@@ -463,7 +575,8 @@ const routes = {
       if (!r.ok) throw new Error("download " + r.status);
       const buf = Buffer.from(await r.arrayBuffer());
       const mediaId = await store.saveMedia({ id: userId }, "audio/mpeg", buf);
-      await store.phoneAdd(userId, from, "voicemail", { mediaId, duration: Number(p.RecordingDuration || 0) });
+      await store.phoneAdd(userId, from, "voicemail", { mediaId, duration: Number(p.RecordingDuration || 0), sid: p.CallSid || null });
+      billing.addRecording(p.CallSid, p.RecordingDuration).catch(() => {});
       pushTo(userId, { type: "phone-update", number: from, kind: "voicemail" });
       notify(userId, { kind: "text", title: await nameOf(userId, from), body: `New voicemail (${Math.floor((p.RecordingDuration || 0) / 60)}:${String((p.RecordingDuration || 0) % 60).padStart(2, "0")})`, tag: "pvm-" + from, url: "/?phone=" + encodeURIComponent(from) });
       if (p.RecordingSid) twilio("DELETE", `/Recordings/${p.RecordingSid}.json`).catch(() => {});

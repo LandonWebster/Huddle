@@ -186,21 +186,21 @@
     });
   }
   const signedIn = () => { try { return localStorage.getItem("huddle:token"); } catch { return null; } };
-  async function getToken(listen) {
+  async function getToken(listen, emergency) {
     const tk = signedIn();
     if (!tk) throw new Error("Sign in to use the phone");
-    const r = await fetch("/api/phone", { method: "POST", headers: { authorization: "Bearer " + tk, "content-type": "application/json" }, body: JSON.stringify({ listen: !!listen }) });
+    const r = await fetch("/api/phone", { method: "POST", headers: { authorization: "Bearer " + tk, "content-type": "application/json" }, body: JSON.stringify({ listen: !!listen, emergency: !!emergency }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Couldn't reach the phone service");
     return j;
   }
   // One Twilio connection for the whole time the app is open: for calling out, and (for the
   // person who gets call-backs) for hearing about calls coming in.
-  async function getDevice(listenOnly) {
+  async function getDevice(listenOnly, emergency) {
     if (device) return device;
     if (deviceReady) return deviceReady;
     deviceReady = (async () => {
-      const [j] = await Promise.all([getToken(listenOnly), loadSdk()]);
+      const [j] = await Promise.all([getToken(listenOnly, emergency), loadSdk()]);
       if (!j.token) return null; // this person doesn't get call-backs
       const d = new window.Twilio.Device(j.token, {
         codecPreferences: ["opus", "pcmu"],
@@ -275,7 +275,22 @@
     c.on("error", (e) => finish(e && e.code === 31005 ? "The phone call dropped" : "The phone call didn't go through"));
   }
 
+  // 911 (and 933, Twilio's free test that reads back your registered address). Never blocked:
+  // any phone call already going is hung up first.
+  async function dialEmergency(short) {
+    if (call) { try { call.disconnect(); } catch {} await new Promise((r) => setTimeout(r, 300)); }
+    audioCtx();
+    const d = await getDevice(false, true);
+    if (!d) throw new Error("Couldn't reach the phone service. Use your phone's own dialer to call 911.");
+    const c = await d.connect({ params: { To: short } });
+    wire(c, short);
+    setLive(short === "911" ? "Calling 911…" : "Calling the 933 address test…");
+    show(true);
+    return true;
+  }
   async function dial(raw) {
+    const short = String(raw || "").replace(/\D/g, "");
+    if (short === "911" || short === "933") return dialEmergency(short);
     const num = normalize(raw);
     if (!num) throw new Error("Type a 10-digit phone number");
     if (call) throw new Error("You're already on a phone call");
@@ -372,6 +387,7 @@
   // For the Phone screen.
   window.huddlePhone = {
     dial,
+    emergency: dialEmergency,
     pretty,
     label,
     normalize,
