@@ -984,7 +984,7 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .phone-pop.floating { position: fixed; top: auto; bottom: calc(20px + var(--safe-b)); }
 .phone-live .btn.on { background: #fff; color: #111; }
 .btn.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
-/* Someone is calling the Huddle number: shown on screen only (no sound, no notification). */
+/* Someone is calling the Huddle number (rings while the app is open). */
 .phone-ring {
   position: fixed; z-index: 80; left: 50%; transform: translateX(-50%); top: max(12px, env(safe-area-inset-top));
   width: min(420px, calc(100% - 24px)); display: flex; align-items: center; gap: 10px; padding: 12px;
@@ -1012,3 +1012,14 @@ body.account-gate .chats-screen .ch-head strong { text-align: center; }
 .ph-vm audio { width: min(260px, 60vw); height: 36px; }
 .ph-failed { opacity: .85; }
 .ch-msg.mine .ph-failed .ch-time { color: #fecaca; opacity: 1; }
+.ph-notify { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; padding: 10px 12px; border-radius: 14px; background: var(--c-panel); border: 1px solid var(--c-line); font-size: 13px; color: var(--muted); }
+.ph-notify span { flex: 1; }
+.ph-notify .btn { flex: none; padding: 8px 12px; }
+.ph-tabs { margin: 0 0 4px; }
+.ph-call-row { display: flex; align-items: center; }
+.ph-call-row > button:first-child { flex: 1; min-width: 0; width: auto; }
+.ch-list .ph-call-row > .ph-callback { width: 44px; height: 44px; flex: none; padding: 0; justify-content: center; }
+.ph-dir { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #13141c; color: #22d3ee; }
+.ph-dir svg { width: 18px; height: 18px; }
+.ph-dir.missed, .ph-missed { color: #fca5a5; }
+.ph-callback { color: #22d3ee; }

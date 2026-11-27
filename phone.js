@@ -25,11 +25,13 @@
 //  PHONE_GREETING         what callers hear before leaving a voicemail
 //  PUBLIC_URL             this app's address (Render sets RENDER_EXTERNAL_URL on its own)
 //
-// Incoming calls and texts reach whoever last called or texted that number from Huddle.
-// Huddle never rings or notifies outside the app: if it's closed, callers get voicemail.
+// Incoming calls and texts reach whoever last called or texted that number from Huddle, with a
+// notification (when they turned notifications on). If Huddle is closed, the caller is held for
+// about 20 seconds while it opens from the notification, then goes to voicemail.
 const crypto = require("crypto");
 const store = require("./store");
 const live = () => require("./api"); // push + presence (required late: api.js requires this file)
+const { notify } = require("./notify");
 
 const env = (k, d) => (process.env[k] || d || "").trim();
 const SID = () => env("TWILIO_ACCOUNT_SID");
@@ -208,6 +210,9 @@ async function appRoute(method, sub, user, url, body, req) {
     return { status: 200, body: { unread: await store.phoneUnread(user.id) } };
   }
   if (method === "POST" && sub === "text") return sendText(user, body, req);
+  if (method === "GET" && sub === "calls") return { status: 200, body: { calls: await store.phoneCalls(user.id) } };
+  // The app's phone line is connected and can ring (so a waiting caller can be put through).
+  if (method === "POST" && sub === "ready") { lineReady.set(user.id, Date.now()); return { status: 200, body: {} }; }
   return { status: 404, body: { error: "Not found" } };
 }
 
@@ -266,6 +271,20 @@ async function sendText(user, body, req) {
   }
 }
 
+// Whose phone line in the app is connected right now.
+const lineReady = new Map(); // userId -> when it last connected
+function canRing(userId) {
+  try {
+    const a = live();
+    return a.presenceOf(userId).online && (lineReady.get(userId) || 0) > a.offlineAt(userId);
+  } catch { return false; }
+}
+const ringXml = (s, userId, from) => {
+  const after = `${s.base}/twilio/after?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`;
+  return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/></Client></Dial>`;
+};
+const HOLD_TRIES = 6; // about 20 seconds
+
 // ---------- Twilio webhooks (/twilio/...) ----------
 // Twilio signs each webhook: base64(HMAC-SHA1(auth token, url + sorted key/values)).
 function validSignature(url, params, sig) {
@@ -313,17 +332,22 @@ const routes = {
     }
     return "<Hangup/>";
   },
-  // Someone called the Huddle number: ring inside Huddle if the person is in the app, else voicemail.
+  // Someone called the Huddle number: notify, ring inside Huddle, or hold briefly while Huddle
+  // opens from the notification. Nobody picks up: voicemail.
   async incoming(s, p) {
     const from = normalize(p.From) || String(p.From || "unknown").slice(0, 20);
     const userId = await ownerFor(from);
     if (!userId) return `<Say>${xml("Sorry, nobody can take this call right now.")}</Say><Hangup/>`;
-    const online = (() => { try { return live().presenceOf(userId).online; } catch { return false; } })();
-    const after = `${s.base}/twilio/after?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`;
-    if (online) {
-      return `<Dial timeout="25" timeLimit="${MAX_MINUTES() * 60}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/></Client></Dial>`;
-    }
-    return voicemail(s, userId, from);
+    notify(userId, { kind: "call", title: pretty(from), body: "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
+    if (canRing(userId)) return ringXml(s, userId, from);
+    return `<Say>${xml("Please hold while I connect you.")}</Say><Redirect>${xml(`${s.base}/twilio/hold?t=1&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`)}</Redirect>`;
+  },
+  // Waiting for Huddle to open (checked every few seconds).
+  async hold(s, p, q) {
+    const userId = q.get("u"), from = q.get("n"), t = Number(q.get("t")) || 1;
+    if (canRing(userId)) return ringXml(s, userId, from);
+    if (t >= HOLD_TRIES) return voicemail(s, userId, from);
+    return `<Pause length="3"/><Redirect>${xml(`${s.base}/twilio/hold?t=${t + 1}&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`)}</Redirect>`;
   },
   // After ringing in Huddle: answered (save it) or not (voicemail).
   async after(s, p, q) {
@@ -348,6 +372,7 @@ const routes = {
       const mediaId = await store.saveMedia({ id: userId }, "audio/mpeg", buf);
       await store.phoneAdd(userId, from, "voicemail", { mediaId, duration: Number(p.RecordingDuration || 0) });
       pushTo(userId, { type: "phone-update", number: from, kind: "voicemail" });
+      notify(userId, { kind: "text", title: pretty(from), body: `New voicemail (${Math.floor((p.RecordingDuration || 0) / 60)}:${String((p.RecordingDuration || 0) % 60).padStart(2, "0")})`, tag: "pvm-" + from, url: "/?phone=" + encodeURIComponent(from) });
       if (p.RecordingSid) twilio("DELETE", `/Recordings/${p.RecordingSid}.json`).catch(() => {});
     } catch (e) { console.warn("voicemail save failed", e.message); }
     return "";
@@ -363,6 +388,7 @@ const routes = {
     if (pics) body = (body ? body + "\n" : "") + (pics === 1 ? "[sent a picture]" : `[sent ${pics} pictures]`);
     await store.phoneAdd(userId, from, "text_in", { body, sid: p.MessageSid || null });
     pushTo(userId, { type: "phone-update", number: from, kind: "text" });
+    notify(userId, { kind: "text", title: pretty(from), body: body.slice(0, 140), tag: "ptext-" + from, url: "/?phone=" + encodeURIComponent(from) });
     return "";
   },
   // Delivery reports for texts we sent.
@@ -376,6 +402,7 @@ const routes = {
 };
 function voicemail(s, userId, from) {
   store.phoneAdd(userId, from, "missed").then(() => pushTo(userId, { type: "phone-update", number: from })).catch(() => {});
+  notify(userId, { kind: "text", title: pretty(from), body: "Missed call", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) });
   const qs = `u=${encodeURIComponent(userId)}&amp;n=${encodeURIComponent(from)}`;
   return `<Say>${xml(GREETING())}</Say><Record maxLength="120" timeout="5" playBeep="true" trim="trim-silence" action="${s.base}/twilio/vm-done" recordingStatusCallback="${s.base}/twilio/recording?${qs}" recordingStatusCallbackEvent="completed"/>`;
 }

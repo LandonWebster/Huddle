@@ -1,6 +1,6 @@
 // The Phone screen: texts, calls and voicemails with real phone numbers (Huddle's Twilio
 // number). Opened from the lobby. New texts and voicemails show up live while the app is open,
-// with a badge on the Phone button; Huddle never sends notifications.
+// with a badge on the Phone button. Notifications can be turned on here too (public/notifications.js).
 (() => {
   "use strict";
   const H = () => window.huddle || {};
@@ -68,6 +68,7 @@
   }
 
   let view = null; // "list" | "thread"
+  let tab = "texts"; // list tab: "texts" | "calls"
   let current = null; // number open in the thread view
   let unread = 0;
   function renderBadge() {
@@ -120,8 +121,21 @@
           <button class="btn primary" type="submit">Call</button>
         </form>
         <p class="ch-err ph-err"></p>
+        <div class="ph-notify" hidden><span></span><button class="btn" type="button" data-act="notify"></button></div>
+        <div class="ch-tabs ph-tabs" role="tablist">
+          <button type="button" role="tab" data-tab="texts" class="${tab === "texts" ? "on" : ""}">Texts</button>
+          <button type="button" role="tab" data-tab="calls" class="${tab === "calls" ? "on" : ""}">Call log</button>
+        </div>
         <ul class="ch-list ph-list"><li class="ch-empty">Loading…</li></ul>
       </div>`;
+    root.querySelectorAll("[data-tab]").forEach((b) => {
+      b.onclick = () => {
+        tab = b.dataset.tab;
+        root.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("on", x === b));
+        loadList();
+      };
+    });
+    renderNotify();
     const $ = (s) => root.querySelector(s);
     $('[data-act="back"]').onclick = goBack;
     const input = $(".ph-new input"), errEl = $(".ph-err");
@@ -145,6 +159,7 @@
     const mine = root.querySelector(".ph-mine");
     if (j.number) { mine.hidden = false; mine.textContent = `Your Huddle number: ${pretty(j.number)}`; }
     const list = root.querySelector(".ph-list");
+    if (tab === "calls") return renderCalls(list);
     if (!j.threads.length) {
       list.innerHTML = `<li class="ch-empty">No texts or calls yet. Type a number above to text or call it. Texts and voicemails sent to your Huddle number show up here.</li>`;
       return;
@@ -156,6 +171,58 @@
         <span class="ch-meta"><span>${esc(when(t.last.at))}</span>${t.unread ? `<span class="ch-dot">${t.unread}</span>` : ""}</span>
       </button></li>`).join("");
     list.querySelectorAll("button[data-n]").forEach((b) => { b.onclick = () => openThread(b.dataset.n); });
+  }
+
+  // ---------- Call log: every incoming, outgoing and missed call, newest first ----------
+  const ARROW = {
+    call_in: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M7 9v8h8"/></svg>',
+    call_out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>',
+    missed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M7 9v8h8M14 4l6 6"/></svg>',
+    voicemail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6.5" cy="12" r="3.5"/><circle cx="17.5" cy="12" r="3.5"/><path d="M6.5 15.5h11"/></svg>',
+  };
+  function callLabel(c) {
+    if (c.kind === "missed") return "Missed call";
+    if (c.kind === "voicemail") return `Voicemail · ${dur(c.duration)}`;
+    if (c.kind === "call_in") return `Incoming · ${dur(c.duration)}`;
+    return c.duration ? `Outgoing · ${dur(c.duration)}` : "Outgoing · no answer";
+  }
+  function fullTime(t) {
+    const d = new Date(t);
+    return `${when(t)}${d.toDateString() === new Date().toDateString() ? "" : " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  }
+  async function renderCalls(list) {
+    let j;
+    try { j = await api("GET", "calls"); } catch (e) { list.innerHTML = `<li class="ch-empty">${esc(e.message)}</li>`; return; }
+    if (view !== "list" || tab !== "calls") return;
+    if (!j.calls.length) { list.innerHTML = `<li class="ch-empty">No calls yet.</li>`; return; }
+    list.innerHTML = j.calls.map((c) => `
+      <li class="ph-call-row"><button type="button" data-n="${esc(c.number)}">
+        <span class="ph-dir ${c.kind}">${ARROW[c.kind] || ""}</span>
+        <span class="ch-row"><strong class="${c.kind === "missed" ? "ph-missed" : ""}">${esc(pretty(c.number))}</strong><small>${esc(callLabel(c))}</small></span>
+        <span class="ch-meta"><span>${esc(fullTime(c.at))}</span>${c.unread ? '<span class="ch-dot">new</span>' : ""}</span>
+      </button><button type="button" class="ch-icon ph-callback" data-call="${esc(c.number)}" aria-label="Call ${esc(pretty(c.number))} back">${IC.phone}</button></li>`).join("");
+    list.querySelectorAll("button[data-n]").forEach((b) => { b.onclick = () => openThread(b.dataset.n); });
+    list.querySelectorAll("button[data-call]").forEach((b) => { b.onclick = () => callNumber(b.dataset.call); });
+  }
+
+  // ---------- Notifications on/off ----------
+  async function renderNotify() {
+    const box = root.querySelector(".ph-notify");
+    if (!box || !window.huddleNotify) return;
+    const st = await window.huddleNotify.state();
+    if (!root.contains(box)) return;
+    box.hidden = false;
+    const label = box.querySelector("span"), b = box.querySelector("button");
+    const on = st === "on";
+    label.textContent = on ? "Notifications are on for calls, texts and chats." : "Get notified about calls, texts and chats, even when Huddle is closed.";
+    b.textContent = on ? "Turn off" : "Turn on";
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await (on ? window.huddleNotify.disable() : window.huddleNotify.enable()); toast(on ? "Notifications off" : "Notifications on"); }
+      catch (e) { toast(e.message, 7000); }
+      b.disabled = false;
+      renderNotify();
+    };
   }
 
   // ---------- One conversation ----------
@@ -248,6 +315,13 @@
   window.addEventListener("huddle:phone-ended", () => { if (view === "thread") setTimeout(loadThread, 1500); else if (view === "list") setTimeout(loadList, 1500); });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { if (view === "thread") loadThread(); else if (view === "list") loadList(); else refreshBadge(); } });
   window.addEventListener("huddle:signed-in", refreshBadge);
+  // From a notification: open that number's conversation.
+  window.addEventListener("huddle:open-phone", (e) => {
+    const n = normalize(e.detail);
+    if (!n || !token()) return;
+    if (root.hidden) show();
+    openThread(n);
+  });
   fetch("/config", { cache: "no-store" }).then((r) => r.json()).then((c) => {
     if (c.phone && H().config) H().config.phone = true;
     refreshBadge();

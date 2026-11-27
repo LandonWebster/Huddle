@@ -111,7 +111,17 @@ CREATE TABLE IF NOT EXISTS phone_log (
   created_at BIGINT NOT NULL,
   read_at BIGINT
 );
-CREATE INDEX IF NOT EXISTS phone_log_user ON phone_log (user_id, number, created_at)
+CREATE INDEX IF NOT EXISTS phone_log_user ON phone_log (user_id, number, created_at);
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+)
 `;
 
 let pool = null;
@@ -507,11 +517,40 @@ async function phoneUserFor(number, byNumber) {
 async function phoneUsed(userId) {
   return !!(await one("SELECT 1 AS x FROM phone_log WHERE user_id = $1 LIMIT 1", [userId]));
 }
+// Every call in the log: incoming, outgoing, missed and voicemails, newest first.
+async function phoneCalls(userId, limit = 200) {
+  const rows = await q("SELECT * FROM phone_log WHERE user_id = $1 AND kind IN ('call_in', 'call_out', 'missed', 'voicemail') ORDER BY created_at DESC LIMIT $2", [userId, limit]);
+  return rows.map(phoneOut);
+}
+
+// ---------- Small saved settings, and notification subscriptions ----------
+async function getSetting(key) {
+  const r = await one("SELECT value FROM app_settings WHERE key = $1", [key]);
+  return r ? r.value : null;
+}
+async function setSetting(key, value) {
+  if (await getSetting(key) != null) await q("UPDATE app_settings SET value = $1 WHERE key = $2", [value, key]);
+  else await q("INSERT INTO app_settings (key, value) VALUES ($1, $2)", [key, value]);
+}
+async function savePushSub(userId, sub) {
+  await q("DELETE FROM push_subs WHERE endpoint = $1", [sub.endpoint]);
+  await q("INSERT INTO push_subs (endpoint, user_id, data, created_at) VALUES ($1, $2, $3, $4)", [sub.endpoint, userId, JSON.stringify(sub), now()]);
+}
+async function pushSubs(userId) {
+  const rows = await q("SELECT data FROM push_subs WHERE user_id = $1", [userId]);
+  return rows.map((r) => { try { return JSON.parse(r.data); } catch { return null; } }).filter(Boolean);
+}
+async function deletePushSub(endpoint, userId) {
+  if (userId) await q("DELETE FROM push_subs WHERE endpoint = $1 AND user_id = $2", [endpoint, userId]);
+  else await q("DELETE FROM push_subs WHERE endpoint = $1", [endpoint]);
+}
+
 async function userByName(name) {
   return one("SELECT * FROM users WHERE username = $1", [nameKey(name)]);
 }
 
 module.exports = {
+  phoneCalls, getSetting, setSetting, savePushSub, pushSubs, deletePushSub,
   phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName,
   tidyName, nameKey,
   init, get persistent() { return persistent; },

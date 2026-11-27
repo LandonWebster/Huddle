@@ -1,8 +1,8 @@
 // Huddle service worker: lets the installed app open quickly, and even without a connection.
 // Calls themselves always need the internet; only the app's own files are cached.
-const CACHE = "huddle-v24";
+const CACHE = "huddle-v25";
 const SHELL = [
-  "/", "/style.css", "/app.js", "/games/hub.js", "/games/butter.js", "/chats.js", "/phone.js", "/phone-inbox.js", "/pip-brain.js", "/pip.js", "/games/tictactoe.js", "/games/connect4.js", "/games/trivia.js", "/manifest.webmanifest", "/icon.svg",
+  "/", "/style.css", "/app.js", "/games/hub.js", "/games/butter.js", "/chats.js", "/phone.js", "/phone-inbox.js", "/notifications.js", "/pip-brain.js", "/pip.js", "/games/tictactoe.js", "/games/connect4.js", "/games/trivia.js", "/manifest.webmanifest", "/icon.svg",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
 ];
 
@@ -38,4 +38,41 @@ self.addEventListener("fetch", (e) => {
       })
       .catch(() => caches.match(req))
   );
+});
+
+// ---------- Notifications: phone calls, texts, voicemails, chat messages, call invites ----------
+// Skipped when Huddle is open and on screen (the app shows those itself).
+self.addEventListener("push", (e) => {
+  let n = {};
+  try { n = e.data ? e.data.json() : {}; } catch {}
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    if (wins.some((w) => w.visibilityState === "visible" && w.focused)) return;
+    const call = n.kind === "call";
+    await self.registration.showNotification(n.title || "Huddle", {
+      body: n.body || "",
+      tag: n.tag || undefined,
+      renotify: !!n.tag,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/favicon-32.png",
+      data: { url: n.url || "/" },
+      requireInteraction: call,
+      vibrate: call ? [400, 200, 400, 200, 400, 200, 400] : [120, 60, 120],
+    });
+  })());
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || "/", self.location.origin).href;
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const w of wins) {
+      if (new URL(w.url).origin !== self.location.origin) continue;
+      await w.focus();
+      w.postMessage({ type: "huddle-open", url });
+      return;
+    }
+    await self.clients.openWindow(url);
+  })());
 });

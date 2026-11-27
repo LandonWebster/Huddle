@@ -1,9 +1,10 @@
 // Accounts, friends and saved chats: JSON over HTTP at /api/..., with live updates pushed
-// over the same WebSocket the app already uses (only while the app is open; Huddle never sends
-// notifications).
+// over the same WebSocket the app already uses while the app is open, and as notifications
+// (notify.js) for people who turned them on.
 const store = require("./store");
 const pipAi = require("./pip-ai");
 const phone = require("./phone");
+const { notify, route: pushRoute } = require("./notify");
 
 const MAX_IMAGE = 6 * 1024 * 1024;
 const MAX_VOICE = 4 * 1024 * 1024;
@@ -12,6 +13,8 @@ const VOICE_TYPES = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audi
 
 // userId -> Set of open sockets
 const sockets = new Map();
+// When each person last closed the app (so we know their phone line needs to reconnect).
+const offlineAt = new Map();
 function attach(ws, user) {
   const set = sockets.get(user.id) || new Set();
   const wasOnline = set.size > 0;
@@ -21,7 +24,7 @@ function attach(ws, user) {
   if (!wasOnline) tellFriends(user);
   ws.on("close", () => {
     set.delete(ws);
-    if (!set.size) sockets.delete(user.id);
+    if (!set.size) { sockets.delete(user.id); offlineAt.set(user.id, Date.now()); }
     tellFriends(user);
   });
 }
@@ -181,6 +184,12 @@ async function handle(req, res, url) {
       const r = await phone.tokenFor(me, req, body);
       return json(res, r.status, r.body);
     }
+    // Notifications on/off for this device.
+    if (parts[0] === "push" && parts[1] && parts.length === 2) {
+      const body = req.method === "POST" ? await readJson(req) : {};
+      const r = await pushRoute(req.method, parts[1], me, body);
+      return json(res, r.status, r.body);
+    }
     // The Phone screen: texts, calls and voicemails with real phone numbers.
     if (parts[0] === "phone" && parts[1] && parts.length === 2) {
       const body = req.method === "POST" ? await readJson(req) : {};
@@ -231,14 +240,17 @@ async function handle(req, res, url) {
         r.messages = cut(r.messages);
         return json(res, 200, r);
       }
-      // Ask a friend to join your call. Their app shows it only while it's open (no notification).
+      // Ask a friend to join your call: shown in their app, or as a notification if it's closed.
       if (route === "POST /chats/:id/invite") {
         const { room } = await readJson(req);
         const code = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
         if (!code) return json(res, 400, { error: "No call to invite to" });
         if (blockedHere) return json(res, 403, { error: "You can't call this person" });
         const others = store.chatPeople(chat).filter((u) => u !== me.id && !hide.has(u));
-        for (const u of others) push(u, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me), group: chat.group ? chat.name : null });
+        for (const u of others) {
+          push(u, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me), group: chat.group ? chat.name : null });
+          notify(u, { kind: "call", title: chat.group ? `${me.display} is calling ${chat.name}` : `${me.display} is calling`, body: "Tap to join the Huddle call", tag: "invite-" + code, url: "/r/" + code, ttl: 60 });
+        }
         return json(res, 200, { online: others.some((u) => presenceOf(u).online), group: !!chat.group });
       }
       if (chat.group && route === "POST /chats/:id/members") {
@@ -283,6 +295,11 @@ async function handle(req, res, url) {
         } else return json(res, 400, { error: "Unknown message type" });
         const saved = await store.addMessage(me, chat, msg);
         pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved }, hide);
+        const preview = kind === "text" ? msg.body.slice(0, 140) : kind === "image" ? "Sent a photo" : "Sent a voice note";
+        for (const u of store.chatPeople(chat)) {
+          if (u === me.id || hide.has(u)) continue;
+          notify(u, { kind: "text", title: chat.group ? `${me.display} in ${chat.name}` : me.display, body: preview, tag: "chat-" + chat.id, url: "/?chat=" + encodeURIComponent(chat.id) });
+        }
         return json(res, 200, { message: saved });
       }
     }
@@ -309,4 +326,4 @@ async function handle(req, res, url) {
   }
 }
 
-module.exports = { handle, attach, presence, push, presenceOf };
+module.exports = { handle, attach, presence, push, presenceOf, offlineAt: (id) => offlineAt.get(id) || 0 };
