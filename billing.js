@@ -105,7 +105,7 @@ async function buyNumber(user, base, nearCell) {
   if (!found) throw Object.assign(new Error("No numbers are available right now. Try again later."), { status: 503 });
   const bought = await twilio("POST", "/IncomingPhoneNumbers.json", {
     PhoneNumber: found.phone_number, FriendlyName: `Huddle: ${user.username}`.slice(0, 64),
-    VoiceUrl: `${base}/twilio/incoming`, VoiceMethod: "POST",
+    VoiceUrl: `${base}/twilio/incoming`, VoiceMethod: "POST", StatusCallback: `${base}/twilio/call-status`, StatusCallbackMethod: "POST",
   });
   const paidUntil = Date.now() + MONTH;
   await store.saveNumber(user.id, bought.phone_number, bought.sid, paidUntil);

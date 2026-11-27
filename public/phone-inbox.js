@@ -462,12 +462,14 @@
       if (![5, 10, 15, 20, 25, 30].includes(secs)) secs = 20;
       html += `
         <p class="ph-ok">Your Huddle number: <b>${esc(pretty(j.huddleNumber))}</b></p>
-        <p>Set your cell to forward calls you don't answer to it. Your cell still rings first; if you don't pick up, Huddle rings. Open your phone's dialer, type the code for your carrier, and press call:</p>
+        <p>Set your cell to forward calls you don't answer to it. Your cell still rings first; if you don't pick up, Huddle rings.</p>
+        <p class="ph-step">Step 1: pick how many seconds your cell rings first. Do this before you dial, because the code below changes with it.</p>
         <label class="ph-ring">Ring my cell for
           <select data-act="ringsecs" aria-label="Seconds your cell rings before Huddle">
             ${[5, 10, 15, 20, 25, 30].map((n) => `<option value="${n}"${n === secs ? " selected" : ""}>${n} seconds</option>`).join("")}
           </select>
           then send the call to Huddle</label>
+        <p class="ph-step">Step 2: open your phone's dialer, type the code for your carrier, and press call.</p>
         <ul class="ph-steps">
           <li><b>AT&amp;T or T-Mobile</b><code class="ph-gsm">**61*${esc(hn)}**${secs}#</code></li>
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
