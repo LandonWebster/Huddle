@@ -92,8 +92,8 @@ async function doSetup(base) {
     callerId = owned.phone_number;
     // Calls to this number come to Huddle (call-backs, voicemail). Texting is off, so texts
     // aren't sent to Huddle.
-    const want = { VoiceUrl: `${base}/twilio/incoming`, VoiceMethod: "POST", SmsUrl: "" };
-    if (owned.voice_url !== want.VoiceUrl || (owned.sms_url || "") !== "") {
+    const want = { VoiceUrl: `${base}/twilio/incoming`, VoiceMethod: "POST", SmsUrl: "", StatusCallback: `${base}/twilio/call-status`, StatusCallbackMethod: "POST" };
+    if (owned.voice_url !== want.VoiceUrl || (owned.sms_url || "") !== "" || owned.status_callback !== want.StatusCallback) {
       await twilio("POST", `/IncomingPhoneNumbers/${owned.sid}.json`, want).catch((e) => console.warn("Couldn't point the number at Huddle:", e.message));
     }
   }
@@ -474,7 +474,15 @@ const ringXml = (s, userId, from, name, viaCell, limit = MAX_MINUTES() * 60) => 
   const after = `${s.base}/twilio/after?u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}`;
   return `<Dial timeout="25" timeLimit="${limit}" answerOnBridge="true" action="${xml(after)}"><Client><Identity>u${xml(userId)}</Identity><Parameter name="from" value="${xml(from)}"/>${name ? `<Parameter name="name" value="${xml(name)}"/>` : ""}${viaCell ? '<Parameter name="via" value="cell"/>' : ""}</Client></Dial>`;
 };
-const HOLD_TRIES = 6; // about 20 seconds
+const HOLD_TRIES = 8; // about 25 seconds: time to tap Answer on the ringing notification and open Huddle
+
+// Calls ringing someone's devices while Huddle is closed. The notification keeps ringing until
+// the call is answered, goes to voicemail, the caller hangs up, or Decline is tapped.
+const ringCalls = new Map(); // CallSid -> { userId, from, at }
+const ringSig = (sid) => crypto.createHmac("sha256", AUTH() || "x").update("decline:" + sid).digest("hex").slice(0, 32);
+function ringDone(userId, from) {
+  for (const [sid, r] of ringCalls) if (r.userId === userId && r.from === from) ringCalls.delete(sid);
+}
 
 // ---------- 911 ----------
 // A 911 call shows the dispatcher the emergency address registered on the calling number (Twilio
@@ -609,7 +617,15 @@ const routes = {
       if ((await callLimit(userId, "in")) < 60) return voicemail(s, userId, from);
     }
     const name = await store.contactName(userId, from).catch(() => null);
-    notify(userId, { kind: "call", title: name || pretty(from), body: cellOwner ? "Calling your cell" : "Calling your Huddle number", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from), ttl: 30 });
+    if (p.CallSid) {
+      for (const [sid, r] of ringCalls) if (Date.now() - r.at > 10 * 60 * 1000) ringCalls.delete(sid);
+      ringCalls.set(p.CallSid, { userId, from, at: Date.now() });
+    }
+    notify(userId, {
+      kind: "call", ring: true, title: name || pretty(from), body: cellOwner ? "Calling your cell" : "Calling your Huddle number",
+      tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) + "&answer=1", ttl: 30,
+      decline: p.CallSid ? `/twilio/decline?c=${encodeURIComponent(p.CallSid)}&k=${ringSig(p.CallSid)}` : undefined,
+    });
     if (canRing(userId)) return ringXml(s, userId, from, name, !!cellOwner, await callLimit(userId, "in"));
     return `<Say>${xml("Please hold while I connect you.")}</Say><Redirect>${xml(`${s.base}/twilio/hold?t=1&u=${encodeURIComponent(userId)}&n=${encodeURIComponent(from)}${cellOwner ? "&c=1" : ""}`)}</Redirect>`;
   },
@@ -624,6 +640,8 @@ const routes = {
   async after(s, p, q) {
     const userId = q.get("u"), from = q.get("n");
     if (p.DialCallStatus === "completed") {
+      ringDone(userId, from);
+      notify(userId, { kind: "call-end", tag: "pcall-" + from }); // answered: stop ringing on other devices
       await store.phoneAdd(userId, from, "call_in", { duration: Number(p.DialCallDuration || 0), sid: p.CallSid || null });
       pushTo(userId, { type: "phone-update", number: from });
       return "<Hangup/>";
@@ -663,15 +681,41 @@ const routes = {
     if (++check.tries >= 3) { check.failed = true; return `<Say>${xml("That code didn't match. Start again in Huddle. Goodbye.")}</Say><Hangup/>`; }
     return gatherXml(s, userId, number, "That code didn't match. Please try again.");
   },
+  // The call's final status (set on the number): a caller who hung up while Huddle was still
+  // ringing becomes a missed call, which also stops the ringing.
+  async "call-status"(s, p) {
+    const r = p.CallSid && ringCalls.get(p.CallSid);
+    if (!r || !["completed", "canceled", "busy", "failed", "no-answer"].includes(p.CallStatus)) return "";
+    ringCalls.delete(p.CallSid);
+    await store.phoneAdd(r.userId, r.from, "missed").catch(() => {});
+    pushTo(r.userId, { type: "phone-update", number: r.from });
+    notify(r.userId, { kind: "text", title: await nameOf(r.userId, r.from), body: "Missed call", tag: "pcall-" + r.from, url: "/?phone=" + encodeURIComponent(r.from) });
+    return "";
+  },
   // Texting is off: anything Twilio still sends here is ignored.
   async sms() { return ""; },
   async "sms-status"() { return ""; },
 };
 function voicemail(s, userId, from) {
+  ringDone(userId, from);
   store.phoneAdd(userId, from, "missed").then(() => pushTo(userId, { type: "phone-update", number: from })).catch(() => {});
   nameOf(userId, from).then((title) => notify(userId, { kind: "text", title, body: "Missed call", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) }));
   const qs = `u=${encodeURIComponent(userId)}&amp;n=${encodeURIComponent(from)}`;
   return `<Say>${xml(GREETING())}</Say><Record maxLength="120" timeout="5" playBeep="true" trim="trim-silence" action="${s.base}/twilio/vm-done" recordingStatusCallback="${s.base}/twilio/recording?${qs}" recordingStatusCallbackEvent="completed"/>`;
+}
+
+// Decline tapped on a ringing notification (sent by the app's service worker, which has no
+// sign-in, so the link carries its own signature): send the caller to voicemail now.
+async function decline(url, res) {
+  const sid = url.searchParams.get("c") || "", k = url.searchParams.get("k") || "";
+  const r = ringCalls.get(sid);
+  const good = k.length === 32 && crypto.timingSafeEqual(Buffer.from(k), Buffer.from(ringSig(sid)));
+  if (!good || !r) { res.writeHead(good ? 410 : 403); return res.end(); }
+  try {
+    const s = await ready(null);
+    await twilio("POST", `/Calls/${encodeURIComponent(sid)}.json`, { Twiml: `<Response>${voicemail(s, r.userId, r.from)}</Response>` });
+  } catch (e) { console.warn("decline failed", e.message); }
+  res.writeHead(204); res.end();
 }
 
 // POST /twilio/<name>
@@ -682,6 +726,7 @@ function webhook(req, res, url) {
   req.on("data", (c) => { size += c.length; if (size < 64 * 1024) chunks.push(c); });
   req.on("end", async () => {
     try {
+      if (name === "decline") return decline(url, res);
       if (!enabled() || !routes[name]) { res.writeHead(404); return res.end(); }
       const s = await ready(req);
       const params = Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString("utf8")));
@@ -692,7 +737,7 @@ function webhook(req, res, url) {
       twiml(res, await routes[name](s, params, url.searchParams));
     } catch (e) {
       console.warn("phone webhook failed", name, e.message);
-      twiml(res, ["sms", "sms-status", "recording", "cell-verified"].includes(name) ? "" : "<Say>Sorry, something went wrong.</Say><Hangup/>");
+      twiml(res, ["sms", "sms-status", "recording", "cell-verified", "call-status"].includes(name) ? "" : "<Say>Sorry, something went wrong.</Say><Hangup/>");
     }
   });
 }

@@ -141,7 +141,13 @@ With Twilio set up, Huddle has its own phone number for calls (texting is turned
   Huddle number, plus chat messages and call invites. Web push with keys made once and saved
   in the database; skipped while Huddle is open on screen. Works in Chrome/Edge/Firefox and
   installed PWAs; iPhone needs Huddle on the Home Screen (iOS 16.4+). The Android APK (WebView)
-  can't get them yet.
+  can't get them yet. A phone call *rings* while Huddle is closed: the notification is shown
+  again every few seconds (with the device's notification sound and vibration) for up to 30
+  seconds, with Answer and Decline buttons. Answer opens Huddle and picks up the held caller
+  (callers are held about 25 seconds); Decline sends them to voicemail; answering on another
+  device or the caller hanging up stops it (Twilio's call status callback on the number). Web
+  pages can't play their own ringtone while closed, so the sound is the device's notification
+  sound. On Windows, Chrome/Edge must be allowed to run in the background to get it.
 - **Your cell** (Phone screen): anyone can link their own cell. Huddle proves it's theirs first
   (Twilio calls it and they type a code shown in Huddle; that also makes it a verified caller ID
   they can show when calling out), or Twilio Verify texts them a code (works without A2P texting
