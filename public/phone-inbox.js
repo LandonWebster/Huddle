@@ -456,13 +456,23 @@
             <p class="ph-small ph-center">$${up.month.toFixed(2)} first month + $${up.credit.toFixed(2)} call credit + ${money(up.fee)} card fee</p>` : ""}`;
     } else if (j.huddleNumber) {
       const hn = j.huddleNumber.replace(/^\+/, ""), hn10 = hn.replace(/^1(?=\d{10}$)/, ""); // Verizon wants 10 digits
+      // AT&T/T-Mobile (GSM) let you pick how long your cell rings first: 5 to 30 seconds.
+      let secs = 20;
+      try { secs = Number(localStorage.getItem("huddle:ringSecs")) || 20; } catch {}
+      if (![5, 10, 15, 20, 25, 30].includes(secs)) secs = 20;
       html += `
         <p class="ph-ok">Your Huddle number: <b>${esc(pretty(j.huddleNumber))}</b></p>
         <p>Set your cell to forward calls you don't answer to it. Your cell still rings first; if you don't pick up, Huddle rings. Open your phone's dialer, type the code for your carrier, and press call:</p>
+        <label class="ph-ring">Ring my cell for
+          <select data-act="ringsecs" aria-label="Seconds your cell rings before Huddle">
+            ${[5, 10, 15, 20, 25, 30].map((n) => `<option value="${n}"${n === secs ? " selected" : ""}>${n} seconds</option>`).join("")}
+          </select>
+          then send the call to Huddle</label>
         <ul class="ph-steps">
-          <li><b>AT&amp;T or T-Mobile</b><code>**61*${esc(hn)}#</code></li>
+          <li><b>AT&amp;T or T-Mobile</b><code class="ph-gsm">**61*${esc(hn)}**${secs}#</code></li>
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
         </ul>
+        <p class="ph-small">The number at the end of the AT&amp;T/T-Mobile code (<b class="ph-secs">${secs}</b>) is how many seconds your cell rings before the call goes to Huddle. Verizon's code has no timer: your cell rings about 4 or 5 times (around 25 seconds) first. To change the time later, just dial the new code.</p>
         <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>`;
     }
     // Optional: your cell as caller ID.
@@ -489,6 +499,14 @@
     if (j.ownNumber) html += `<button class="btn danger ph-giveup" type="button" data-act="giveup">Give up my Huddle number</button>`;
     box.innerHTML = html;
     const on = (sel, fn) => { const el = box.querySelector(sel); if (el) el.onclick = fn; };
+    const ringSel = box.querySelector('[data-act="ringsecs"]');
+    if (ringSel) ringSel.onchange = () => {
+      const n = ringSel.value;
+      try { localStorage.setItem("huddle:ringSecs", n); } catch {}
+      const code = box.querySelector(".ph-gsm");
+      code.textContent = code.textContent.replace(/\*\*\d+#$/, `**${n}#`);
+      box.querySelector(".ph-secs").textContent = n;
+    };
     on('[data-act="money"]', openBilling);
     on('[data-act="upgrade"]', async (e) => {
       e.target.disabled = true;
