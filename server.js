@@ -81,8 +81,8 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname.startsWith("/api/")) return api.handle(req, res, url);
-  // Twilio asks here what to do with a phone call someone started from the app.
-  if (url.pathname === "/twilio/voice" && req.method === "POST") return phone.voiceWebhook(req, res);
+  // Twilio asks here what to do with phone calls and texts (see phone.js).
+  if (url.pathname.startsWith("/twilio/") && req.method === "POST") return phone.webhook(req, res, url);
   // Twilio's calling library for the browser, only loaded when someone calls a phone.
   if (url.pathname === "/vendor/twilio.min.js") {
     return fs.readFile(TWILIO_JS, (err, data) => {

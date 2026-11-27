@@ -98,6 +98,20 @@ CREATE TABLE IF NOT EXISTS media (
   data BYTEA NOT NULL,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS phone_log (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  number TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT,
+  media_id TEXT,
+  duration INTEGER,
+  status TEXT,
+  sid TEXT,
+  created_at BIGINT NOT NULL,
+  read_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS phone_log_user ON phone_log (user_id, number, created_at)
 `;
 
 let pool = null;
@@ -441,7 +455,64 @@ async function mediaOwner(mid) {
   return r && r.owner;
 }
 
+// ---------- Phone: texts, calls and voicemails with real phone numbers (see phone.js) ----------
+// kind: text_in, text_out, call_in, call_out, missed, voicemail
+async function phoneAdd(userId, number, kind, { body = null, mediaId = null, duration = null, status = null, sid = null } = {}) {
+  const row = { id: id(), user_id: userId, number, kind, body, media_id: mediaId, duration, status, sid, created_at: now(),
+    read_at: /_out$/.test(kind) ? now() : null };
+  await q(`INSERT INTO phone_log (id, user_id, number, kind, body, media_id, duration, status, sid, created_at, read_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [row.id, userId, number, kind, body, mediaId, duration, status, sid, row.created_at, row.read_at]);
+  return phoneOut(row);
+}
+const phoneOut = (r) => ({ id: r.id, number: r.number, kind: r.kind, body: r.body || "", mediaId: r.media_id || null,
+  duration: r.duration == null ? null : Number(r.duration), status: r.status || null, at: Number(r.created_at), unread: !r.read_at });
+async function phoneSetStatus(sid, status) {
+  const r = await one("SELECT * FROM phone_log WHERE sid = $1", [sid]);
+  if (!r) return null;
+  await q("UPDATE phone_log SET status = $1 WHERE id = $2", [status, r.id]);
+  return { ...phoneOut({ ...r, status }), userId: r.user_id };
+}
+async function phoneThreads(userId) {
+  const rows = await q("SELECT * FROM phone_log WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1000", [userId]);
+  const by = new Map();
+  for (const r of rows) {
+    let t = by.get(r.number);
+    if (!t) by.set(r.number, (t = { number: r.number, last: phoneOut(r), unread: 0 }));
+    if (!r.read_at) t.unread++;
+  }
+  return [...by.values()];
+}
+async function phoneThread(userId, number, before, limit = 60) {
+  const rows = before
+    ? await q("SELECT * FROM phone_log WHERE user_id = $1 AND number = $2 AND created_at < $3 ORDER BY created_at DESC LIMIT $4", [userId, number, Number(before), limit])
+    : await q("SELECT * FROM phone_log WHERE user_id = $1 AND number = $2 ORDER BY created_at DESC LIMIT $3", [userId, number, limit]);
+  return rows.reverse().map(phoneOut);
+}
+async function phoneMarkRead(userId, number) {
+  await q("UPDATE phone_log SET read_at = $1 WHERE user_id = $2 AND number = $3 AND read_at IS NULL", [now(), userId, number]);
+}
+async function phoneUnread(userId) {
+  const r = await one("SELECT COUNT(*) AS n FROM phone_log WHERE user_id = $1 AND read_at IS NULL", [userId]);
+  return Number((r && r.n) || 0);
+}
+// Who should get a call or text from this number: whoever last talked to it (byNumber), or
+// whoever last called or texted anyone.
+async function phoneUserFor(number, byNumber) {
+  const r = byNumber
+    ? number && await one("SELECT user_id FROM phone_log WHERE number = $1 ORDER BY created_at DESC LIMIT 1", [number])
+    : await one("SELECT user_id FROM phone_log WHERE kind IN ('text_out', 'call_out') ORDER BY created_at DESC LIMIT 1", []);
+  return r ? r.user_id : null;
+}
+async function phoneUsed(userId) {
+  return !!(await one("SELECT 1 AS x FROM phone_log WHERE user_id = $1 LIMIT 1", [userId]));
+}
+async function userByName(name) {
+  return one("SELECT * FROM users WHERE username = $1", [nameKey(name)]);
+}
+
 module.exports = {
+  phoneAdd, phoneSetStatus, phoneThreads, phoneThread, phoneMarkRead, phoneUnread, phoneUserFor, phoneUsed, userByName,
   tidyName, nameKey,
   init, get persistent() { return persistent; },
   createUser, login, newSession, userForToken, endSession, publicUser,

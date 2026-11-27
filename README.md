@@ -98,22 +98,32 @@ message. Live while the app is open; no notifications. Data lives in Postgres: s
 `DATABASE_URL` (a free Neon database works). Without it, chats are kept in memory and lost on
 restart. Code: `api.js`, `store.js`, `public/chats.js`.
 
-## Calling real phone numbers (Twilio)
+## Real phone calls and texts (Twilio)
 
-In a call, the phone button dials a real phone number (US and Canada). Everyone in the call
-hears the phone, and the phone hears everyone: the person who dialed mixes the audio in their
-browser. Calls only go out; Huddle never rings or shows anything outside the app. The button
-only appears once this is set up, and only signed-in people can use it.
+With Twilio set up, Huddle has its own phone number:
+- **Call out from a Huddle call** (phone button in the call controls). Everyone in the call hears
+  the phone, and the phone hears everyone: the person who dialed mixes the audio in their browser.
+- **Phone & texts screen** (lobby): text or call any US/Canada number, see missed calls, play
+  voicemails. New texts and voicemails show up live with a badge while the app is open.
+- **Call-backs**: calls to the Huddle number ring *on screen only* inside Huddle while it's open
+  (no ring sound, no notification). If nobody answers or the app is closed, callers hear a
+  greeting and can leave a voicemail (up to 2 minutes), which is saved in Huddle and deleted from
+  Twilio.
+- Calls and texts from a number go to whoever in Huddle last talked to it; new numbers go to
+  `PHONE_OWNER` (a Huddle account name) or else whoever used the phone last.
 
 Setup (one time):
-1. Make a Twilio account at twilio.com and buy one phone number with Voice (about $1.15/month).
-2. In the Twilio Console home page, copy the **Account SID** and **Auth Token**.
-3. In Render, add them as `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`, then save (it redeploys).
+1. Make a Twilio account, upgrade it, and buy one local number with Voice + SMS (~$1.15/month).
+2. Copy the **Account SID** and **Auth Token** into Render as `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
 
-The server makes the rest (a Twilio API key and a "Huddle phone calls" TwiML app) on the first
-call. Costs: roughly 1.4¢ a minute for the phone leg plus about 0.4¢ a minute for the app leg
-(US). Trial accounts can only call numbers verified in Twilio and play a short trial message.
+On start the server creates a Twilio API key and a "Huddle phone calls" TwiML app, and points the
+number's voice and SMS webhooks at `/twilio/incoming` and `/twilio/sms`. Every webhook checks
+Twilio's signature.
 
-Limits (optional env vars): `PHONE_ALLOW_PREFIXES` (default `+1`), `PHONE_MAX_MINUTES`
-(default 30 per call), `PHONE_CALLS_PER_DAY` (default 20 per person), `TWILIO_PHONE_NUMBER`
-(caller ID, default the first number in the account).
+Texting to US numbers needs A2P 10DLC registration in Twilio (Sole Proprietor for individuals):
+the number's "Complete A2P registration" checklist (compliance profile, Messaging Service, Brand,
+Campaign). Huddle sends through the number's Messaging Service when it has one.
+
+Costs (approx., US): calls ~1.4¢/min + ~0.4¢/min app leg; texts ~1¢ each incl. carrier fees.
+Limits (env vars): `PHONE_ALLOW_PREFIXES` (default `+1`), `PHONE_MAX_MINUTES` (30 per call),
+`PHONE_CALLS_PER_DAY` (20), `PHONE_TEXTS_PER_DAY` (100), `PHONE_GREETING`, `TWILIO_PHONE_NUMBER`.

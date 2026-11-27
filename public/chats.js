@@ -88,7 +88,9 @@
   setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25000);
 
   function onLive(m) {
-    if (m.type === "auth-ok") { if (view === "room" && room) catchUp(); sendPresence(); loadLobbyFriends(); return; }
+    if (m.type === "auth-ok") { if (view === "room" && room) catchUp(); sendPresence(); loadLobbyFriends(); window.dispatchEvent(new Event("huddle:signed-in")); return; }
+    // Texts, calls and voicemails for the Phone screen (public/phone-inbox.js, public/phone.js).
+    if (m.type === "phone-update") { window.dispatchEvent(new CustomEvent("huddle:phone-live", { detail: m })); return; }
     if (m.type === "presence") { updatePresence(m); return; }
     if (m.type === "call-invite") { showInvite(m); return; }
     if (m.type === "auth-failed") { signedOut(); return; }
