@@ -217,6 +217,11 @@
     window.dispatchEvent(new CustomEvent("huddle:signedin", { detail: me }));
   }
   window.HuddleAccount = { signedIn: false, user: null };
+  // For the tab bar (public/tabs.js): close this screen, or open the account menu from any tab.
+  window.HuddleChats = {
+    hide: () => { if (!gate) hide(); },
+    accountMenu: () => { if (me) openAccountMenu(); },
+  };
 
   // ----- Chats list -----
   let chatsCache = [];
@@ -226,7 +231,7 @@
     room = null;
     stopRecording(true);
     root.innerHTML = `
-      <header class="ch-head">
+      <header class="ch-head top">
         <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
         <strong>Chats</strong>
         <button class="ch-icon" data-act="account" aria-label="Account">${IC.menu}</button>
