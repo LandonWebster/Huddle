@@ -71,6 +71,25 @@ function push(userId, msg) {
 const pushChat = (chat, msg, skip) => { for (const u of store.chatPeople(chat)) if (!skip || !skip.has(u)) push(u, msg); };
 const OFFLINE = { online: false, inCall: false };
 
+// Sent / Delivered / Read (always shared: there's no switch to hide them).
+async function receiptsFor(chat, me) {
+  return (await store.receipts(chat)).filter((r) => r.userId !== me.id);
+}
+// Tell everyone else in the chat how far this person has got.
+async function sendReceipt(chat, userId) {
+  try {
+    const r = (await store.receipts(chat)).find((x) => x.userId === userId);
+    if (!r) return;
+    const msg = { type: "chat-receipt", chatId: chat.id, ...r };
+    const hide = await store.blockSet(userId);
+    for (const u of store.chatPeople(chat)) if (u !== userId && !hide.has(u)) push(u, msg);
+  } catch {}
+}
+// This person's app now has every message up to n in the chat.
+async function gotUpTo(chat, userId, n) {
+  if (await store.markGot(userId, chat.id, n)) await sendReceipt(chat, userId);
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -321,6 +340,10 @@ async function handle(req, res, url) {
       for (const c of chats) {
         if (c.friend) Object.assign(c.friend, seen(c.friend.id), hide.has(c.friend.id) ? { blockedMe: true } : {});
         if (c.group) for (const m of c.group.members) Object.assign(m, seen(m.id));
+        if (c.last && c.last.sender !== me.id) {
+          const ch = await store.chatFor(me, c.id);
+          if (ch) await gotUpTo(ch, me.id, c.last.n);
+        }
       }
       return json(res, 200, { chats, saved: store.persistent });
     }
@@ -334,11 +357,18 @@ async function handle(req, res, url) {
       const blockedHere = !chat.group && hide.has(store.otherId(chat, me));
       if (route === "GET /chats/:id/messages") {
         const after = url.searchParams.get("after");
-        if (after) return json(res, 200, { messages: cut(await store.messagesAfter(chat, after)) });
+        const newest = (list) => list.reduce((a, m) => Math.max(a, m.n), 0);
+        if (after) {
+          const list = await store.messagesAfter(chat, after);
+          await gotUpTo(chat, me.id, newest(list));
+          return json(res, 200, { messages: cut(list), receipts: await receiptsFor(chat, me) });
+        }
         const r = await store.messages(chat, {
           before: url.searchParams.get("before"), around: url.searchParams.get("around"), limit: url.searchParams.get("limit"),
         });
+        await gotUpTo(chat, me.id, newest(r.messages));
         r.messages = cut(r.messages);
+        r.receipts = await receiptsFor(chat, me);
         return json(res, 200, r);
       }
       // Ask a friend to join your call: shown in their app, or as a notification if it's closed.
@@ -376,7 +406,8 @@ async function handle(req, res, url) {
       if (route === "GET /chats/:id/pinned") return json(res, 200, { messages: await store.pinnedMessages(chat) });
       if (route === "POST /chats/:id/read") {
         const { n } = await readJson(req);
-        await store.markRead(me, chat, Number(n) || 0);
+        await store.markRead(me, chat, Math.min(Number(n) || 0, Number(chat.last_n) || Infinity));
+        await sendReceipt(chat, me.id);
         return json(res, 200, {});
       }
       if (route === "POST /chats/:id/messages") {
@@ -393,15 +424,21 @@ async function handle(req, res, url) {
           if ((await store.mediaOwner(String(b.mediaId || ""))) !== me.id) return json(res, 400, { error: "Upload missing" });
           const duration = kind === "voice" ? Math.max(0, Math.min(600, Number(b.duration) || 0)) : null;
           msg = { kind, mediaId: String(b.mediaId), duration, body: String(b.body || "").slice(0, 500) };
+        } else if (kind === "screenshot") {
+          // The Android app saw a screenshot of this chat. ids = the messages that were on screen.
+          const ids = (Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => /^[\w-]{1,32}$/.test(x)).slice(0, 80);
+          msg = { kind, body: JSON.stringify(ids) };
         } else return json(res, 400, { error: "Unknown message type" });
         const saved = await store.addMessage(me, chat, msg);
         pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved, from: me.display, group: chat.group ? chat.name : null }, hide);
-        const preview = kind === "text" ? msg.body.slice(0, 140) : kind === "image" ? "Sent a photo" : "Sent a voice note";
+        // Anyone with Huddle open gets it right away: that's "Delivered".
+        for (const u of store.chatPeople(chat)) if (u !== me.id && !hide.has(u) && sockets.has(u)) await gotUpTo(chat, u, saved.n);
+        const preview = kind === "text" ? msg.body.slice(0, 140) : kind === "image" ? "Sent a photo" : kind === "screenshot" ? "Took a screenshot of the chat" : "Sent a voice note";
         for (const u of store.chatPeople(chat)) {
           if (u === me.id || hide.has(u)) continue;
           notify(u, { kind: "text", cat: "chat", title: chat.group ? `${me.display} in ${chat.name}` : me.display, body: preview, tag: "chat-" + chat.id, url: "/?chat=" + encodeURIComponent(chat.id) });
         }
-        return json(res, 200, { message: saved });
+        return json(res, 200, { message: saved, receipts: await receiptsFor(chat, me) });
       }
     }
     if (parts[0] === "messages" && parts[1] && route === "POST /messages/:id/pin") {
