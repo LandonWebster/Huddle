@@ -1,0 +1,92 @@
+name: iPhone app
+
+# Checks that the Huddle iPhone app (native/ios) still builds, on one of GitHub's Mac computers.
+# It builds WITHOUT Apple signing, because Huddle doesn't have an Apple developer account yet,
+# so the result can't be installed on a phone. It proves the code is right and ready for later.
+# Once there's an Apple account, see native/ios/APPLE-CHECKLIST.md.
+
+on:
+  pull_request:
+    paths:
+      - "native/ios/**"
+      - "native/package.json"
+      - "native/package-lock.json"
+      - "native/capacitor.config.json"
+      - ".github/workflows/ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "native/ios/**"
+      - "native/package.json"
+      - "native/package-lock.json"
+      - "native/capacitor.config.json"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the newest Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1); fi
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
+      - name: Install Capacitor
+        working-directory: native
+        run: npm ci
+
+      - name: Sync iPhone project
+        working-directory: native
+        run: npx cap sync ios
+
+      - name: Build (unsigned)
+        working-directory: native/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/build.log" | grep -E "error:|warning: .*Huddle|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" "$RUNNER_TEMP/build.log"
+
+      - name: Save the unsigned app
+        if: success()
+        run: |
+          cd "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos"
+          zip -qry "$RUNNER_TEMP/Huddle-unsigned.zip" App.app
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Huddle-iPhone-unsigned
+          path: ${{ runner.temp }}/Huddle-unsigned.zip
+          retention-days: 14
+
+      - name: Build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
