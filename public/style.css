@@ -546,6 +546,13 @@ input[type=range] { padding: 0; border: 0; background: transparent; accent-color
 .ch-wave { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); overflow: hidden; }
 .ch-wave i { display: block; height: 100%; width: 0; background: currentColor; }
 .ch-dur { font-size: 12px; font-variant-numeric: tabular-nums; }
+.ch-msg.has-rcpt { flex-direction: column; align-items: flex-end; }
+.ch-rcpt { font-size: 11px; color: var(--c-muted, #8a93a6); margin: 2px 4px 0; }
+.ch-rcpt.read { color: var(--c-cyan); }
+.ch-msg.pending .ch-bubble { opacity: .6; }
+.ch-msg.pending.failed .ch-bubble { opacity: 1; background: transparent; color: inherit; border-color: #e5484d; }
+.ch-msg.pending.failed { cursor: pointer; }
+.ch-msg.pending.failed .ch-rcpt { color: #ff6b6e; font-weight: 600; }
 .ch-msg.flash .ch-bubble { animation: chFlash 1.6s ease-out; }
 @keyframes chFlash { 0%, 40% { box-shadow: 0 0 0 4px var(--c-cyan); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .ch-jump { position: sticky; bottom: 8px; left: 50%; transform: translateX(-50%); display: block; margin: 0 auto; padding: 8px 14px; border-radius: 999px; border: 0; background: var(--c-cyan); color: #0b0b0f; font-weight: 700; cursor: pointer; }

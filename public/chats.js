@@ -108,6 +108,10 @@
       else refreshBadge();
       return;
     }
+    if (m.type === "chat-receipt") {
+      if (view === "room" && room && room.id === m.chatId) { room.receipts[m.userId] = { got: m.got, read: m.read }; drawReceipt(); }
+      return;
+    }
     if (m.type === "chat-pin") {
       if (view === "room" && room && room.id === m.chatId) updateMessage(m.message);
     }
@@ -492,7 +496,7 @@
   // ----- One chat -----
   function openRoom(c) {
     view = "room";
-    room = { id: c.id, chat: c, friend: c.friend, msgs: new Map(), oldest: null, newest: 0, more: false, loading: false, hasNewer: false };
+    room = { id: c.id, chat: c, friend: c.friend, msgs: new Map(), receipts: {}, pending: [], oldest: null, newest: 0, more: false, loading: false, hasNewer: false };
     root.innerHTML = `
       <header class="ch-head">
         <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
@@ -549,6 +553,7 @@
       const j = await api(`/chats/${r.id}/messages?limit=50`);
       if (room !== r) return;
       r.more = j.more;
+      takeReceipts(j.receipts);
       addMessages(j.messages, false);
       scrollToBottom();
       markRead();
@@ -588,7 +593,9 @@
     if (!r || r.hasNewer) return;
     try {
       const j = await api(`/chats/${r.id}/messages?after=${r.newest}`);
-      if (room === r && j.messages.length) { addMessages(j.messages, true); markRead(); }
+      if (room !== r) return;
+      takeReceipts(j.receipts);
+      if (j.messages.length) { addMessages(j.messages, true); markRead(); } else drawReceipt();
     } catch {}
   }
   let readTimer = null;
@@ -615,8 +622,69 @@
       if (m.n > r.newest) r.newest = m.n;
     }
     regroup();
+    drawReceipt();
     if (live && (atBottom || list.some((m) => me && m.sender === me.id))) scrollToBottom();
   }
+  // ----- Sending… / Not sent / Sent / Delivered / Read -----
+  function takeReceipts(list) {
+    if (!room || !Array.isArray(list)) return;
+    for (const x of list) room.receipts[x.userId] = { got: x.got, read: x.read };
+  }
+  function receiptText(n) {
+    const c = room.chat;
+    const others = isGroup(c) ? c.group.members.filter((u) => !me || u.id !== me.id) : [c.friend];
+    const rc = (u) => room.receipts[u.id] || { got: 0, read: 0 };
+    const readers = others.filter((u) => rc(u).read >= n);
+    if (!isGroup(c)) return readers.length ? "Read" : rc(c.friend).got >= n ? "Delivered" : "Sent";
+    if (others.length && readers.length === others.length) return "Read by everyone";
+    if (readers.length) {
+      const names = readers.slice(0, 3).map((u) => u.display.split(" ")[0]);
+      return "Read by " + names.join(", ") + (readers.length > 3 ? ` +${readers.length - 3}` : "");
+    }
+    return others.some((u) => rc(u).got >= n) ? "Delivered" : "Sent";
+  }
+  // The status shows under your newest message, like most chat apps.
+  function drawReceipt() {
+    const s = stream();
+    if (!room || !s || !me) return;
+    for (const el of s.querySelectorAll(".ch-msg.has-rcpt:not(.pending)")) { el.classList.remove("has-rcpt"); const t = el.querySelector(".ch-rcpt"); if (t) t.remove(); }
+    let last = null;
+    for (const m of room.msgs.values()) if (m.sender === me.id && (!last || m.n > last.n)) last = m;
+    if (!last) return;
+    const el = s.querySelector(`.ch-msg[data-id="${CSS.escape(last.id)}"]`);
+    if (!el) return;
+    const t = document.createElement("span");
+    t.className = "ch-rcpt";
+    t.textContent = receiptText(last.n);
+    if (/^Read/.test(t.textContent)) t.classList.add("read");
+    el.classList.add("has-rcpt");
+    el.appendChild(t);
+  }
+  // A message on its way out. It shows "Sending…" right away, then "Not sent · Tap to retry" if it fails.
+  function sendWithStatus(r, preview, run) {
+    const el = document.createElement("div");
+    el.className = "ch-msg mine pending has-rcpt";
+    el.dataset.n = "9e15"; el.dataset.at = String(Date.now());
+    el.innerHTML = `<div class="ch-bubble ${preview.kind}">${preview.html}</div><span class="ch-rcpt">Sending…</span>`;
+    const label = el.querySelector(".ch-rcpt");
+    if (room === r) { stream().appendChild(el); regroup(); scrollToBottom(); }
+    const attempt = async () => {
+      el.classList.remove("failed");
+      label.textContent = "Sending…";
+      try {
+        const j = await run();
+        el.remove();
+        if (room === r) { takeReceipts(j.receipts); addMessages([j.message], true); }
+      } catch (ex) {
+        el.classList.add("failed");
+        label.textContent = "Not sent · Tap to retry";
+        if (ex && ex.status && ex.status !== 429 && ex.status < 500) toast(ex.message);
+      }
+    };
+    el.onclick = () => { if (el.classList.contains("failed")) attempt(); };
+    attempt();
+  }
+
   // Day labels between days, like other chat apps.
   function regroup() {
     const s = stream();
@@ -659,6 +727,7 @@
     el.classList.toggle("pinned", m.pinned);
     el.innerHTML = bubbleHtml(m);
     wireBubble(el, m);
+    drawReceipt();
   }
   const fmtDur = (s) => { s = Math.round(Number(s) || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
@@ -770,8 +839,8 @@
   // ----- Sending -----
   async function sendText(body) {
     const r = room;
-    try { const j = await api(`/chats/${r.id}/messages`, { body: { kind: "text", body } }); if (room === r) addMessages([j.message], true); }
-    catch (ex) { toast(ex.message); }
+    sendWithStatus(r, { kind: "text", html: `<span class="ch-text">${linkify(body)}</span>` },
+      () => api(`/chats/${r.id}/messages`, { body: { kind: "text", body } }));
   }
   // Photos are shrunk to a sensible size before sending, so they upload fast on phones.
   async function shrinkImage(f) {
@@ -789,20 +858,22 @@
   async function upload(blob, type) {
     const r = await fetch("/api/media", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": type }, body: blob });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || "Upload failed");
+    if (!r.ok) throw Object.assign(new Error(j.error || "Upload failed"), { status: r.status });
     return j.id;
   }
   async function sendPhoto(f) {
     const r = room;
     if (!/^image\//.test(f.type)) { toast("That isn't a photo"); return; }
-    toast("Sending photo…", 1500);
-    try {
-      const blob = await shrinkImage(f);
-      const type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
-      const mediaId = await upload(blob, type);
+    const blob = await shrinkImage(f);
+    const type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+    const local = URL.createObjectURL(blob);
+    let mediaId = null;
+    sendWithStatus(r, { kind: "image", html: `<img class="ch-img" src="${local}" alt="Photo">` }, async () => {
+      if (!mediaId) mediaId = await upload(blob, type);
       const j = await api(`/chats/${r.id}/messages`, { body: { kind: "image", mediaId } });
-      if (room === r) addMessages([j.message], true);
-    } catch (ex) { toast(ex.message); }
+      setTimeout(() => URL.revokeObjectURL(local), 5000);
+      return j;
+    });
   }
 
   // ----- Voice notes -----
@@ -850,11 +921,11 @@
     if (r.cancelled || duration < 0.7 || !r.chunks.length) { if (!r.cancelled) toast("Hold on a bit longer to record"); return; }
     const type = (r.mr.mimeType || r.chunks[0].type || "audio/webm").split(";")[0];
     const blob = new Blob(r.chunks, { type });
-    try {
-      const mediaId = await upload(blob, type);
-      const j = await api(`/chats/${r.chat.id}/messages`, { body: { kind: "voice", mediaId, duration } });
-      if (room === r.chat) addMessages([j.message], true);
-    } catch (ex) { toast(ex.message); }
+    let mediaId = null;
+    sendWithStatus(r.chat, { kind: "voice", html: `<div class="ch-voice"><span class="ch-wave"><i></i></span><span class="ch-dur">${fmtDur(duration)}</span></div>` }, async () => {
+      if (!mediaId) mediaId = await upload(blob, type);
+      return api(`/chats/${r.chat.id}/messages`, { body: { kind: "voice", mediaId, duration } });
+    });
   }
   // One voice note plays at a time.
   let playing = null; // { audio, bubble }

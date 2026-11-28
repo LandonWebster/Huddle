@@ -6,7 +6,7 @@
   "use strict";
   const H = () => window.huddle || {};
   const KEY = "huddle:prefs";
-  const DEFAULTS = { phoneRing: true, phoneAlerts: true, huddleRing: true, chats: true, alarms: true, sounds: true, vibrate: true };
+  const DEFAULTS = { phoneRing: true, phoneAlerts: true, huddleRing: true, chats: true, alarms: true, sounds: true, vibrate: true, readReceipts: true };
   const token = () => { try { return localStorage.getItem("huddle:token"); } catch { return null; } };
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const toast = (t, ms) => { if (H().toast) H().toast(t, ms); };
@@ -53,6 +53,8 @@
     { k: "phoneAlerts", t: "Voicemails and missed calls" },
     { k: "sounds", t: "Sounds", s: "Notifications and ringing make a sound." },
     { k: "vibrate", t: "Vibration" },
+    { head: "Chats" },
+    { k: "readReceipts", t: "Send read receipts", s: "Friends see \"Read\" under their messages once you've seen them." },
   ];
 
   let el = null;
