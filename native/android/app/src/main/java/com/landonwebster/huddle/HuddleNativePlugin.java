@@ -54,9 +54,11 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  setAlarms                   the Alarms tab's alarms and timer, as real phone alarms (AlarmScheduler)
  *  notifyStatus / requestNotifications / openAlarmSettings   permission to notify and to ring on time
  *  setCallVolume / restoreVolume   quiet 911 calls: the phone's volume for the call, then back
+ *  cancelNotification          take a ringing call's notification away
  *  showNotification            a chat or call-invite notification while Huddle is in the background
  *
- * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
+ * Events sent to the page: "screenFrame" {data (JPEG base64), width, height}, "screenShareStopped"
+ * and "screenshot" (someone took a screenshot of Huddle; Android 14+).
  */
 @CapacitorPlugin(name = "HuddleNative")
 public class HuddleNativePlugin extends Plugin {
@@ -204,6 +206,13 @@ public class HuddleNativePlugin extends Plugin {
         p.notifyListeners("screenShareStopped", new JSObject());
     }
 
+    // A screenshot was taken while Huddle was on screen (Android 14+, see MainActivity).
+    static void screenshotTaken() {
+        HuddleNativePlugin p = instance;
+        if (p == null) return;
+        p.notifyListeners("screenshot", new JSObject());
+    }
+
     private boolean granted(String perm) {
         return ContextCompat.checkSelfPermission(getContext(), perm) == PackageManager.PERMISSION_GRANTED;
     }
@@ -324,6 +333,16 @@ public class HuddleNativePlugin extends Plugin {
         call.resolve(new JSObject().put("exact", AlarmScheduler.canExact(ctx)));
     }
 
+    /** Songs, photos and videos for alarms, saved in the app so the phone's alarm can use them (AlarmMedia). */
+    @PluginMethod
+    public void alarmMedia(PluginCall call) {
+        try {
+            call.resolve(AlarmMedia.handle(getContext(), call.getData()));
+        } catch (Exception e) {
+            call.reject("Couldn't save that for the alarm", e);
+        }
+    }
+
     // ---------- Notifications ----------
     @PluginMethod
     public void notifyStatus(PluginCall call) {
@@ -386,11 +405,23 @@ public class HuddleNativePlugin extends Plugin {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setCategory(ringing ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(ringing ? NotificationCompat.PRIORITY_MAX : NotificationCompat.PRIORITY_HIGH);
-        if (ringing) b.setTimeoutAfter(30000).addAction(0, "Join", pi);
+        if (ringing) {
+            b.setTimeoutAfter(30000).addAction(0, call.getString("action", "Join"), pi);
+            // A call: on a locked or sleeping phone it opens full screen, like a normal phone call.
+            if (Boolean.TRUE.equals(call.getBoolean("fullScreen", false))) b.setFullScreenIntent(pi, true);
+        }
         if (silent) b.setSilent(true);
         Notification n = b.build();
         if (ringing && !silent) n.flags |= Notification.FLAG_INSISTENT; // rings until opened or 30 s pass
         try { NotificationManagerCompat.from(ctx).notify(tag, 1, n); } catch (SecurityException ignored) {}
+        call.resolve();
+    }
+
+    /** The call stopped ringing (answered, declined or hung up): take its notification away. */
+    @PluginMethod
+    public void cancelNotification(PluginCall call) {
+        String tag = call.getString("tag", "huddle");
+        try { NotificationManagerCompat.from(getContext()).cancel(tag, 1); } catch (Exception ignored) {}
         call.resolve();
     }
 

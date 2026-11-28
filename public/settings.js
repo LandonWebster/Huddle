@@ -156,43 +156,103 @@
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && el) { renderDevice(); renderNative(); } });
 
-  // A ringtone for calls that ring inside the app (Huddle invites). Returns stop().
-  function ringtone(kind) {
+  // A real looping ringtone, played by the app itself (not a notification sound).
+  //   kind "call": a phone-style double ring (two tones together, trilled), every 3 seconds.
+  //   kind "alarm": quick rising beeps.
+  // Returns stop(). Stops by itself after `ms` (30 s for calls, 60 s for alarms).
+  let sharedCtx = null;
+  function audio() {
+    if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (sharedCtx.state === "suspended") sharedCtx.resume().catch(() => {});
+    return sharedCtx;
+  }
+  // The first tap or key press anywhere unlocks sound, so a later call can ring with no tap.
+  const unlock = () => { try { audio(); } catch {} };
+  document.addEventListener("pointerdown", unlock, { once: true, capture: true });
+  document.addEventListener("keydown", unlock, { once: true, capture: true });
+  function ringtone(kind, ms) {
     if (window.huddleQuiet) return () => {}; // on a quiet 911 call
-    let ctx = null, loop = null, vib = null;
+    let loop = null, vib = null, out = null;
     const on = (k) => prefs[k] !== false;
     if (on("sounds")) try {
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      const burst = () => {
-        const t = ctx.currentTime;
-        for (let i = 0; i < 2; i++) {
-          const o = ctx.createOscillator(), g = ctx.createGain();
-          o.type = "sine"; o.frequency.value = i ? 660 : 523;
-          g.gain.setValueAtTime(0, t + i * 0.4);
-          g.gain.linearRampToValueAtTime(0.18, t + i * 0.4 + 0.04);
-          g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.4 + 0.38);
-          o.connect(g).connect(ctx.destination);
-          o.start(t + i * 0.4); o.stop(t + i * 0.4 + 0.4);
-        }
+      const ctx = audio();
+      out = ctx.createGain(); out.gain.value = 1; out.connect(ctx.destination);
+      const ring = () => {
+        const t = ctx.currentTime + 0.02;
+        const bursts = kind === "alarm" ? [[0, 0.16], [0.24, 0.16], [0.48, 0.16], [0.72, 0.16]] : [[0, 0.9], [1.2, 0.9]];
+        bursts.forEach(([at, len], n) => {
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0, t + at);
+          g.gain.linearRampToValueAtTime(0.32, t + at + 0.02);
+          g.gain.setValueAtTime(0.32, t + at + len - 0.05);
+          g.gain.linearRampToValueAtTime(0, t + at + len);
+          g.connect(out);
+          const freqs = kind === "alarm" ? [880 + n * 110] : [440, 480];
+          for (const f of freqs) {
+            const o = ctx.createOscillator();
+            o.type = "sine"; o.frequency.value = f;
+            if (kind !== "alarm") {
+              // A 20 Hz trill, like a phone bell.
+              const lfo = ctx.createOscillator(), depth = ctx.createGain();
+              lfo.frequency.value = 20; depth.gain.value = 0.35;
+              const trem = ctx.createGain(); trem.gain.value = 0.65;
+              lfo.connect(depth).connect(trem.gain);
+              o.connect(trem).connect(g);
+              lfo.start(t + at); lfo.stop(t + at + len);
+            } else o.connect(g);
+            o.start(t + at); o.stop(t + at + len);
+          }
+        });
       };
-      burst();
-      loop = setInterval(burst, 2400);
+      ring();
+      loop = setInterval(ring, kind === "alarm" ? 1400 : 3000);
     } catch {}
     if (on("vibrate") && navigator.vibrate) {
-      try { navigator.vibrate([500, 300, 500]); } catch {}
-      vib = setInterval(() => { try { navigator.vibrate([500, 300, 500]); } catch {} }, 2400);
+      const buzz = () => { try { navigator.vibrate(kind === "alarm" ? [300, 150, 300, 150, 300] : [900, 300, 900]); } catch {} };
+      buzz();
+      vib = setInterval(buzz, kind === "alarm" ? 1400 : 3000);
     }
     let done = false;
     const stop = () => {
       if (done) return; done = true;
       clearInterval(loop); clearInterval(vib);
-      if (ctx) ctx.close().catch(() => {});
+      try { if (out) out.disconnect(); } catch {}
       try { navigator.vibrate && navigator.vibrate(0); } catch {}
     };
-    setTimeout(stop, 30000);
+    setTimeout(stop, ms || (kind === "alarm" ? 60000 : 30000));
     return stop;
   }
+
+  // ---------- Ringing, one place for all of it ----------
+  // start(tag, kind, cat) rings until stop(tag) (or it times out). The same tag never rings
+  // twice, so the app's own call screens and a message from the service worker (a call arriving
+  // while Huddle is open in the background) don't double up.
+  const ringingNow = new Map(); // tag -> stop
+  const CAT_PREF = { "phone-call": "phoneRing", "huddle-call": "huddleRing", alarm: "alarms" };
+  const HuddleRing = {
+    start(tag, kind, cat) {
+      if (!tag || ringingNow.has(tag)) return;
+      if (CAT_PREF[cat] && prefs[CAT_PREF[cat]] === false) return;
+      const stop = ringtone(kind === "alarm" ? "alarm" : "call");
+      ringingNow.set(tag, stop);
+      setTimeout(() => { if (ringingNow.get(tag) === stop) ringingNow.delete(tag); }, kind === "alarm" ? 60000 : 30000);
+    },
+    stop(tag) {
+      const s = ringingNow.get(tag);
+      if (s) { s(); ringingNow.delete(tag); }
+    },
+    stopAll() { for (const t of [...ringingNow.keys()]) HuddleRing.stop(t); },
+    has: (tag) => ringingNow.has(tag),
+  };
+  window.HuddleRing = HuddleRing;
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      const d = e.data || {};
+      if (d.type === "huddle-ring") HuddleRing.start(d.tag, d.kind, d.cat);
+      else if (d.type === "huddle-ring-stop") HuddleRing.stop(d.tag);
+    });
+  }
+
 
   window.HuddlePrefs = {
     ringtone,

@@ -82,7 +82,8 @@
   }
 
   // ---------- Someone's profile ----------
-  // opts: api(path), isMe, onCall(), onMessage(), onReport(), onBlock(), onEdit()
+  // opts: api(path), isMe, onCall(), onMessage(), onReport(), onBlock(), onEdit(),
+  // afterActions(el): adds extra rows (like Sleep Mode's caller exception) below the buttons.
   async function open(user, opts) {
     const { wrap, close } = overlay(user.display || "Profile");
     const status = user.inCall ? "In a call" : user.online ? "On Huddle now" : "";
@@ -99,6 +100,7 @@
                ${opts.onMessage ? '<button type="button" class="pp-btn" data-a="msg">💬 Message</button>' : ""}
                <button type="button" class="pp-btn more" data-a="more" aria-label="More">⋯</button>`}
         </div>
+        ${opts.afterActions && !opts.isMe ? '<div class="pp-extra"><span class="pp-anchor"></span></div>' : ""}
         ${listsHtml(p, !!opts.onCall)}
         <div class="pp-pad"></div></div>`;
       wrap.querySelector(".pp-back").onclick = close;
@@ -106,6 +108,8 @@
       on("edit", opts.onEdit); on("call", opts.onCall); on("msg", opts.onMessage);
       const more = wrap.querySelector('[data-a="more"]');
       if (more) more.onclick = () => moreSheet(p, opts, close);
+      const anchor = wrap.querySelector(".pp-anchor");
+      if (anchor) opts.afterActions(anchor);
       for (const b of wrap.querySelectorAll("[data-play]")) b.onclick = () => { close(); opts.onCall(); toast("Pick the game once the call starts", 3000); };
     };
     draw({ ...user, games: [], songs: [], socials: {} });

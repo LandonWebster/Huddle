@@ -546,7 +546,19 @@ input[type=range] { padding: 0; border: 0; background: transparent; accent-color
 .ch-wave { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); overflow: hidden; }
 .ch-wave i { display: block; height: 100%; width: 0; background: currentColor; }
 .ch-dur { font-size: 12px; font-variant-numeric: tabular-nums; }
+.ch-msg.has-rcpt { flex-direction: column; align-items: flex-end; }
+.ch-rcpt { font-size: 11px; color: var(--muted); margin: 2px 4px 0; }
+.ch-rcpt.read { color: var(--c-cyan); }
+.ch-msg.pending .ch-bubble { opacity: .6; }
+.ch-msg.pending.failed .ch-bubble { opacity: 1; background: transparent; color: inherit; border-color: #e5484d; }
+.ch-msg.pending.failed { cursor: pointer; }
+.ch-msg.pending.failed .ch-rcpt { color: #ff6b6e; font-weight: 600; }
 .ch-msg.flash .ch-bubble { animation: chFlash 1.6s ease-out; }
+.ch-msg.shot .ch-bubble { animation: chShot 3.2s ease-out; }
+@keyframes chShot { 0%, 70% { box-shadow: 0 0 0 3px var(--c-cyan); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.ch-msg.notice { justify-content: center; }
+.ch-notice { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--c-line); background: var(--c-panel); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.ch-notice:hover { color: var(--c-cyan); border-color: var(--c-cyan); }
 @keyframes chFlash { 0%, 40% { box-shadow: 0 0 0 4px var(--c-cyan); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .ch-jump { position: sticky; bottom: 8px; left: 50%; transform: translateX(-50%); display: block; margin: 0 auto; padding: 8px 14px; border-radius: 999px; border: 0; background: var(--c-cyan); color: #0b0b0f; font-weight: 700; cursor: pointer; }
 
@@ -1346,10 +1358,17 @@ body.tabs-on #lobby .brand > div { flex: 1; min-width: 0; }
 .ph-vol input { flex: 1; accent-color: var(--accent-2); min-width: 0; }
 .ph-vol output { width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
 .ph-vol-note { margin: 4px 0 0; font-size: 13.5px; font-weight: 700; color: var(--text); line-height: 1.4; }
-.ph-setup-row { display: flex; align-items: stretch; gap: 8px; margin: 0 0 10px; }
+/* Setup rows on the Phone screen: one card, a filled Open/Setup pill and an outlined Not now pill. */
+.ph-setup-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px 10px 10px 14px; border-radius: 14px; border: 1px solid rgba(34,211,238,.25); background: rgba(43,89,255,.10); font-size: 14px; }
 .ph-setup-row[hidden] { display: none; }
-.ph-setup-row .ph-cell-row { margin: 0; flex: 1; min-width: 0; }
-.ph-notnow { flex: none; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.ph-setup-txt { flex: 1; min-width: 0; }
+.ph-pill { flex: none; padding: 7px 13px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.ph-pill.go { border: 1px solid #22d3ee; background: #22d3ee; color: #06121a; }
+.ph-pill.skip { border: 1px solid rgba(34,211,238,.35); background: transparent; color: #22d3ee; }
+.ph-setup-row.ph-sos-row { border-color: rgba(248,113,113,.45); background: rgba(239,68,68,.10); }
+.ph-sos-row .ph-pill.go { border-color: #f87171; background: #f87171; color: #1a0606; }
+.ph-sos-row .ph-pill.skip { border-color: rgba(248,113,113,.5); color: #f87171; }
+.ph-pill:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .ph-tip { margin: 0 0 10px; padding: 10px 14px; border-radius: 12px; background: rgba(34,211,238,.12); border: 1px solid rgba(34,211,238,.35); color: var(--text); font-size: 14px; font-weight: 600; }
 .ph-tip[hidden] { display: none; }
 
@@ -1423,3 +1442,5 @@ body.tabs-on #lobby .brand > div { flex: 1; min-width: 0; }
 .pp-overlay :focus-visible { outline: 2px solid #22d3ee; outline-offset: 2px; }
 .pp-sheet { z-index: 96; }
 .fd-av.tappable { cursor: pointer; }
+.pp-extra { display: flex; flex-direction: column; gap: 8px; margin: 12px 18px 0; }
+.pp-anchor { display: none; }

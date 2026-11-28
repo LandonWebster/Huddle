@@ -82,7 +82,11 @@
       if (H().paintAvatar) H().paintAvatar(el, f, f.display);
       if (f.inCall) el.classList.add("in-call");
     });
-    for (const b of box.querySelectorAll(".home-friend")) b.onclick = () => T.select("contacts");
+    // Tap a friend: their sheet (ask to be Huddle Buddies, open the chat). "Add" opens Contacts.
+    for (const b of box.querySelectorAll(".home-friend")) b.onclick = () => {
+      const f = on.find((x) => x.id === b.dataset.id);
+      if (f && window.HuddleSleep) window.HuddleSleep.friendSheet(f); else T.select("contacts");
+    };
   }
 
   // Notifications are off on this device: offer to turn them on (until "Not now").

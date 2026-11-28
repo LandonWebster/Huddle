@@ -93,6 +93,7 @@
     if (m.type === "phone-update") { window.dispatchEvent(new CustomEvent("huddle:phone-live", { detail: m })); return; }
     if (m.type === "presence") { updatePresence(m); return; }
     if (m.type === "call-invite") { showInvite(m); return; }
+    if (m.type === "buddy") { window.dispatchEvent(new CustomEvent("huddle:buddy", { detail: m })); return; }
     if (m.type === "alarms-changed") { window.dispatchEvent(new Event("huddle:alarms-changed")); return; }
     if (m.type === "auth-failed") { signedOut(); return; }
     if (m.type === "chats-changed") { if (view === "list") loadList(); else refreshBadge(); loadLobbyFriends(); return; }
@@ -106,6 +107,10 @@
       if (view === "room" && room && room.id === m.chatId) { addMessages([m.message], true); markRead(); }
       else if (view === "list") loadList();
       else refreshBadge();
+      return;
+    }
+    if (m.type === "chat-receipt") {
+      if (view === "room" && room && room.id === m.chatId) { room.receipts[m.userId] = { got: m.got, read: m.read }; drawReceipt(); }
       return;
     }
     if (m.type === "chat-pin") {
@@ -319,6 +324,7 @@
     const who = me && m.sender === me.id ? "You: " : isGroup(c) ? senderName(c, m.sender) + ": " : "";
     if (m.kind === "image") return who + "📷 Photo";
     if (m.kind === "voice") return who + "🎤 Voice note";
+    if (m.kind === "screenshot") return (me && m.sender === me.id ? "You" : senderName(c, m.sender)) + " took a screenshot";
     return who + m.body;
   }
   function when(t) {
@@ -394,6 +400,8 @@
       onMessage: c && !fromRoom ? () => { show(); openRoom(c); } : null,
       onReport: () => reportSheet(u, c && c.id),
       onBlock: () => blockSheet(u),
+      // Huddle Sleep Mode Caller Exception and Huddle Buddies (sleep.js), for friends.
+      afterActions: c && window.HuddleSleep ? (el) => window.HuddleSleep.profileRow(el, u) : null,
     });
   }
   function editProfile() {
@@ -428,7 +436,7 @@
   // ----- One chat -----
   function openRoom(c) {
     view = "room";
-    room = { id: c.id, chat: c, friend: c.friend, msgs: new Map(), oldest: null, newest: 0, more: false, loading: false, hasNewer: false };
+    room = { id: c.id, chat: c, friend: c.friend, msgs: new Map(), receipts: {}, pending: [], oldest: null, newest: 0, more: false, loading: false, hasNewer: false };
     root.innerHTML = `
       <header class="ch-head">
         <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
@@ -485,6 +493,7 @@
       const j = await api(`/chats/${r.id}/messages?limit=50`);
       if (room !== r) return;
       r.more = j.more;
+      takeReceipts(j.receipts);
       addMessages(j.messages, false);
       scrollToBottom();
       markRead();
@@ -524,7 +533,9 @@
     if (!r || r.hasNewer) return;
     try {
       const j = await api(`/chats/${r.id}/messages?after=${r.newest}`);
-      if (room === r && j.messages.length) { addMessages(j.messages, true); markRead(); }
+      if (room !== r) return;
+      takeReceipts(j.receipts);
+      if (j.messages.length) { addMessages(j.messages, true); markRead(); } else drawReceipt();
     } catch {}
   }
   let readTimer = null;
@@ -551,8 +562,69 @@
       if (m.n > r.newest) r.newest = m.n;
     }
     regroup();
+    drawReceipt();
     if (live && (atBottom || list.some((m) => me && m.sender === me.id))) scrollToBottom();
   }
+  // ----- Sending… / Not sent / Sent / Delivered / Read -----
+  function takeReceipts(list) {
+    if (!room || !Array.isArray(list)) return;
+    for (const x of list) room.receipts[x.userId] = { got: x.got, read: x.read };
+  }
+  function receiptText(n) {
+    const c = room.chat;
+    const others = isGroup(c) ? c.group.members.filter((u) => !me || u.id !== me.id) : [c.friend];
+    const rc = (u) => room.receipts[u.id] || { got: 0, read: 0 };
+    const readers = others.filter((u) => rc(u).read >= n);
+    if (!isGroup(c)) return readers.length ? "Read" : rc(c.friend).got >= n ? "Delivered" : "Sent";
+    if (others.length && readers.length === others.length) return "Read by everyone";
+    if (readers.length) {
+      const names = readers.slice(0, 3).map((u) => u.display.split(" ")[0]);
+      return "Read by " + names.join(", ") + (readers.length > 3 ? ` +${readers.length - 3}` : "");
+    }
+    return others.some((u) => rc(u).got >= n) ? "Delivered" : "Sent";
+  }
+  // The status shows under your newest message, like most chat apps.
+  function drawReceipt() {
+    const s = stream();
+    if (!room || !s || !me) return;
+    for (const el of s.querySelectorAll(".ch-msg.has-rcpt:not(.pending)")) { el.classList.remove("has-rcpt"); const t = el.querySelector(".ch-rcpt"); if (t) t.remove(); }
+    let last = null;
+    for (const m of room.msgs.values()) if (m.sender === me.id && m.kind !== "screenshot" && (!last || m.n > last.n)) last = m;
+    if (!last) return;
+    const el = s.querySelector(`.ch-msg[data-id="${CSS.escape(last.id)}"]`);
+    if (!el) return;
+    const t = document.createElement("span");
+    t.className = "ch-rcpt";
+    t.textContent = receiptText(last.n);
+    if (/^Read/.test(t.textContent)) t.classList.add("read");
+    el.classList.add("has-rcpt");
+    el.appendChild(t);
+  }
+  // A message on its way out. It shows "Sending…" right away, then "Not sent · Tap to retry" if it fails.
+  function sendWithStatus(r, preview, run) {
+    const el = document.createElement("div");
+    el.className = "ch-msg mine pending has-rcpt";
+    el.dataset.n = "9e15"; el.dataset.at = String(Date.now());
+    el.innerHTML = `<div class="ch-bubble ${preview.kind}">${preview.html}</div><span class="ch-rcpt">Sending…</span>`;
+    const label = el.querySelector(".ch-rcpt");
+    if (room === r) { stream().appendChild(el); regroup(); scrollToBottom(); }
+    const attempt = async () => {
+      el.classList.remove("failed");
+      label.textContent = "Sending…";
+      try {
+        const j = await run();
+        el.remove();
+        if (room === r) { takeReceipts(j.receipts); addMessages([j.message], true); }
+      } catch (ex) {
+        el.classList.add("failed");
+        label.textContent = "Not sent · Tap to retry";
+        if (ex && ex.status && ex.status !== 429 && ex.status < 500) toast(ex.message);
+      }
+    };
+    el.onclick = () => { if (el.classList.contains("failed")) attempt(); };
+    attempt();
+  }
+
   // Day labels between days, like other chat apps.
   function regroup() {
     const s = stream();
@@ -571,12 +643,26 @@
     }
   }
   function renderMessage(m) {
+    if (m.kind === "screenshot") return renderNotice(m);
     const mine = me && m.sender === me.id;
     const el = document.createElement("div");
     el.className = "ch-msg" + (mine ? " mine" : "") + (m.pinned ? " pinned" : "");
     el.dataset.id = m.id; el.dataset.n = m.n; el.dataset.at = m.at;
     el.innerHTML = (!mine && room && isGroup(room.chat) ? `<span class="ch-from">${esc(senderName(room.chat, m.sender))}</span>` : "") + bubbleHtml(m);
     wireBubble(el, m);
+    return el;
+  }
+  // "<name> took a screenshot". Tap it to see which messages were on their screen.
+  function renderNotice(m) {
+    const el = document.createElement("div");
+    el.className = "ch-msg notice";
+    el.dataset.id = m.id; el.dataset.n = m.n; el.dataset.at = m.at;
+    const who = me && m.sender === me.id ? "You" : senderName(room && room.chat, m.sender);
+    const time = new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    el.innerHTML = `<button type="button" class="ch-notice">📸 ${esc(who)} took a screenshot · ${time}</button>`;
+    let ids = [];
+    try { ids = JSON.parse(m.body || "[]"); } catch {}
+    el.querySelector("button").onclick = () => { if (ids.length) jumpTo(ids[0], ids); else toast("No messages were on screen"); };
     return el;
   }
   function bubbleHtml(m) {
@@ -588,13 +674,14 @@
     return `<div class="ch-bubble ${m.kind}">${inner}<span class="ch-time">${m.pinned ? `<span class="ch-pin-mark" title="Pinned">${IC.pin}</span>` : ""}${time}</span></div>`;
   }
   function updateMessage(m) {
-    if (!room || !room.msgs.has(m.id)) return;
+    if (!room || !room.msgs.has(m.id) || m.kind === "screenshot") return;
     room.msgs.set(m.id, m);
     const el = stream().querySelector(`[data-id="${CSS.escape(m.id)}"]`);
     if (!el) return;
     el.classList.toggle("pinned", m.pinned);
     el.innerHTML = bubbleHtml(m);
     wireBubble(el, m);
+    drawReceipt();
   }
   const fmtDur = (s) => { s = Math.round(Number(s) || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
@@ -671,7 +758,7 @@
     for (const b of wrap.querySelectorAll("button[data-id]")) b.onclick = () => { close(); jumpTo(b.dataset.id); };
   }
   // Take you back to a message in the chat, loading the part of the chat around it if needed.
-  async function jumpTo(id) {
+  async function jumpTo(id, highlight) {
     const r = room;
     let el = stream().querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (!el) {
@@ -686,6 +773,12 @@
       } catch (ex) { toast(ex.message); return; }
     }
     if (!el) { toast("That message is gone"); return; }
+    if (highlight && highlight.length) {
+      const els = highlight.map((x) => stream().querySelector(`[data-id="${CSS.escape(x)}"]`)).filter(Boolean);
+      (els.length > 1 ? els[Math.floor(els.length / 2)] : el).scrollIntoView({ block: "center" });
+      for (const e of els) { e.classList.remove("shot"); void e.offsetWidth; e.classList.add("shot"); }
+      return;
+    }
     el.scrollIntoView({ block: "center" });
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
   }
@@ -703,11 +796,30 @@
     setTimeout(() => h.joinRoom(code), 50);
   }
 
+  // ----- Screenshots (Android app, Android 14+) -----
+  // Android tells the app when a screenshot is taken. If a chat is open, everyone in it sees
+  // "<name> took a screenshot", and tapping that highlights the messages that were on screen.
+  function onScreenshot() {
+    if (view !== "room" || !room || document.hidden) return;
+    const b = box(), top = b.getBoundingClientRect();
+    const ids = [...stream().querySelectorAll(".ch-msg[data-id]:not(.notice)")].filter((e) => {
+      const r = e.getBoundingClientRect();
+      return r.bottom > top.top && r.top < top.bottom;
+    }).map((e) => e.dataset.id);
+    const r = room;
+    api(`/chats/${r.id}/messages`, { body: { kind: "screenshot", ids } })
+      .then((j) => { if (room === r) addMessages([j.message], true); }).catch(() => {});
+  }
+  try {
+    const Cap = window.Capacitor;
+    if (Cap && Cap.addListener && Cap.getPlatform && Cap.getPlatform() === "android") Cap.addListener("HuddleNative", "screenshot", onScreenshot);
+  } catch {}
+
   // ----- Sending -----
   async function sendText(body) {
     const r = room;
-    try { const j = await api(`/chats/${r.id}/messages`, { body: { kind: "text", body } }); if (room === r) addMessages([j.message], true); }
-    catch (ex) { toast(ex.message); }
+    sendWithStatus(r, { kind: "text", html: `<span class="ch-text">${linkify(body)}</span>` },
+      () => api(`/chats/${r.id}/messages`, { body: { kind: "text", body } }));
   }
   // Photos are shrunk to a sensible size before sending, so they upload fast on phones.
   async function shrinkImage(f) {
@@ -725,20 +837,22 @@
   async function upload(blob, type) {
     const r = await fetch("/api/media", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": type }, body: blob });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || "Upload failed");
+    if (!r.ok) throw Object.assign(new Error(j.error || "Upload failed"), { status: r.status });
     return j.id;
   }
   async function sendPhoto(f) {
     const r = room;
     if (!/^image\//.test(f.type)) { toast("That isn't a photo"); return; }
-    toast("Sending photo…", 1500);
-    try {
-      const blob = await shrinkImage(f);
-      const type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
-      const mediaId = await upload(blob, type);
+    const blob = await shrinkImage(f);
+    const type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+    const local = URL.createObjectURL(blob);
+    let mediaId = null;
+    sendWithStatus(r, { kind: "image", html: `<img class="ch-img" src="${local}" alt="Photo">` }, async () => {
+      if (!mediaId) mediaId = await upload(blob, type);
       const j = await api(`/chats/${r.id}/messages`, { body: { kind: "image", mediaId } });
-      if (room === r) addMessages([j.message], true);
-    } catch (ex) { toast(ex.message); }
+      setTimeout(() => URL.revokeObjectURL(local), 5000);
+      return j;
+    });
   }
 
   // ----- Voice notes -----
@@ -786,11 +900,11 @@
     if (r.cancelled || duration < 0.7 || !r.chunks.length) { if (!r.cancelled) toast("Hold on a bit longer to record"); return; }
     const type = (r.mr.mimeType || r.chunks[0].type || "audio/webm").split(";")[0];
     const blob = new Blob(r.chunks, { type });
-    try {
-      const mediaId = await upload(blob, type);
-      const j = await api(`/chats/${r.chat.id}/messages`, { body: { kind: "voice", mediaId, duration } });
-      if (room === r.chat) addMessages([j.message], true);
-    } catch (ex) { toast(ex.message); }
+    let mediaId = null;
+    sendWithStatus(r.chat, { kind: "voice", html: `<div class="ch-voice"><span class="ch-wave"><i></i></span><span class="ch-dur">${fmtDur(duration)}</span></div>` }, async () => {
+      if (!mediaId) mediaId = await upload(blob, type);
+      return api(`/chats/${r.chat.id}/messages`, { body: { kind: "voice", mediaId, duration } });
+    });
   }
   // One voice note plays at a time.
   let playing = null; // { audio, bubble }
@@ -985,6 +1099,8 @@
   function showInvite(m) {
     const h = H();
     if (h.inCall && h.room === m.room) return;
+    // Sleep Mode (sleep.js): only your Huddle Buddy's calls come through.
+    if (window.HuddleSleep && !window.HuddleSleep.allowsCall(m.from && m.from.id)) return;
     if (inviteEl) inviteEl.remove();
     clearTimeout(inviteTimer);
     inviteEl = document.createElement("div");
@@ -999,9 +1115,14 @@
     // It rings (Settings > Huddle calls ring). In the Android app with Huddle in the background,
     // the phone shows a ringing notification too.
     const P = window.HuddlePrefs;
-    const stopRing = P && P.get("huddleRing") ? P.ringtone() : () => {};
-    nativeNote({ channel: P && !P.get("huddleRing") ? "messages" : "calls", title: m.group ? `${m.from.display} is calling ${m.group}` : `${m.from.display} is calling`, body: "Huddle call", tag: "invite-" + m.room, url: "/r/" + m.room });
-    const close = () => { stopRing(); if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer); };
+    const ringTag = "invite-" + m.room;
+    if (window.HuddleRing) window.HuddleRing.start(ringTag, "call", "huddle-call");
+    nativeNote({ channel: P && !P.get("huddleRing") ? "messages" : "calls", fullScreen: !!(P && P.get("huddleRing")), action: "Join", title: m.group ? `${m.from.display} is calling ${m.group}` : `${m.from.display} is calling`, body: "Huddle call", tag: ringTag, url: "/r/" + m.room });
+    const close = () => {
+      if (window.HuddleRing) window.HuddleRing.stop(ringTag);
+      if (H().isNativeApp && H().native) H().native("cancelNotification", { tag: ringTag }).catch(() => {});
+      if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer);
+    };
     inviteEl.querySelector(".ic-no").onclick = close;
     inviteEl.querySelector(".ic-yes").onclick = () => {
       close();

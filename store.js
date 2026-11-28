@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS reads (
   last_n BIGINT NOT NULL,
   PRIMARY KEY (user_id, chat_id)
 );
+ALTER TABLE reads ADD COLUMN IF NOT EXISTS got_n BIGINT;
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -587,6 +588,26 @@ async function markRead(me, chat, n) {
   if (!cur) await q("INSERT INTO reads (user_id, chat_id, last_n) VALUES ($1, $2, $3)", [me.id, chat.id, Number(n)]);
   else if (Number(n) > Number(cur.last_n)) await q("UPDATE reads SET last_n = $1 WHERE user_id = $2 AND chat_id = $3", [Number(n), me.id, chat.id]);
 }
+// "Delivered": the newest message this person's app has received in a chat (got_n).
+// Returns true when it moved forward, so the sender can be told.
+async function markGot(userId, chatId, n) {
+  n = Number(n) || 0;
+  if (!n) return false;
+  const cur = await one("SELECT last_n, got_n FROM reads WHERE user_id = $1 AND chat_id = $2", [userId, chatId]);
+  if (!cur) { await q("INSERT INTO reads (user_id, chat_id, last_n, got_n) VALUES ($1, $2, $3, $4)", [userId, chatId, 0, n]); return true; }
+  if (n <= Math.max(Number(cur.got_n) || 0, Number(cur.last_n) || 0)) return false;
+  await q("UPDATE reads SET got_n = $1 WHERE user_id = $2 AND chat_id = $3", [n, userId, chatId]);
+  return true;
+}
+// How far each person in a chat has received (got) and read, for Sent / Delivered / Read.
+async function receipts(chat) {
+  const rows = await q("SELECT user_id, last_n, got_n FROM reads WHERE chat_id = $1", [chat.id]);
+  const people = new Set(chatPeople(chat));
+  return rows.filter((r) => people.has(r.user_id)).map((r) => {
+    const read = Number(r.last_n) || 0;
+    return { userId: r.user_id, read, got: Math.max(read, Number(r.got_n) || 0) };
+  });
+}
 async function setPinned(me, messageId, pinned) {
   const m = await one("SELECT * FROM messages WHERE id = $1", [messageId]);
   if (!m) return null;
@@ -977,11 +998,11 @@ module.exports = {
   tidyName, nameKey,
   init, get persistent() { return persistent; },
   createUser, login, newSession, userForToken, endSession, publicUser,
-  searchUsers, addFriend, listChats, chatFor, otherId, chatPeople,
+  searchUsers, addFriend, listChats, chatFor, otherId, chatPeople, isFriend,
   createGroup, addToGroup, leaveGroup, renameGroup,
   updateProfile, profileFor,
   blockedEither, blockSet, blockedByMe, block, unblock, blockedList, report,
-  addMessage, messages, messagesAfter, markRead, setPinned, pinnedMessages,
+  addMessage, messages, messagesAfter, markRead, markGot, receipts, setPinned, pinnedMessages,
   saveMedia, getMedia, mediaOwner, loadGame, saveGame,
   createPost, postsToday, postRow, postsOut, listPosts, visiblePost, likePost, savePost,
   postComments, addComment, removeComment, removePost, reportPost,
