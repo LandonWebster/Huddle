@@ -1349,6 +1349,9 @@ body.tabs-on #lobby .brand > div { flex: 1; min-width: 0; }
 .ph-setup-row { display: flex; align-items: stretch; gap: 8px; margin: 0 0 10px; }
 .ph-setup-row[hidden] { display: none; }
 .ph-setup-row .ph-cell-row { margin: 0; flex: 1; min-width: 0; }
-.ph-notnow { flex: none; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+/* "Not now" matches its row: blue beside Setup, red beside 911. */
+.ph-notnow { flex: none; padding: 0 14px; border-radius: 14px; border: 1px solid rgba(34,211,238,.25); background: rgba(43,89,255,.10); color: #22d3ee; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.ph-notnow:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.ph-setup-row[data-row="e911"] .ph-notnow { border-color: rgba(248,113,113,.45); background: rgba(239,68,68,.10); color: #f87171; }
 .ph-tip { margin: 0 0 10px; padding: 10px 14px; border-radius: 12px; background: rgba(34,211,238,.12); border: 1px solid rgba(34,211,238,.35); color: var(--text); font-size: 14px; font-weight: 600; }
 .ph-tip[hidden] { display: none; }
