@@ -207,6 +207,59 @@
     if (m.what === "ended") toast("Your Huddle Buddy ended it", 3500);
   });
 
+  // ---------- Quiet other apps (Settings switch, off until turned on) ----------
+  // No app can close other apps on Android, iPhone or a computer. The closest real thing, in the
+  // Huddle Android app: while Sleep Mode is on, turn on the phone's Do Not Disturb so other apps
+  // can't ring, buzz or pop up (alarms, sleep calls and Huddle's calls still get through), and put
+  // it back after (native SleepFocusPlugin). Elsewhere we say to use the device's own Sleep Focus.
+  const Cap = window.Capacitor;
+  const focusNative = !!(Cap && typeof Cap.nativePromise === "function" && (Cap.PluginHeaders || []).some((h) => h.name === "HuddleSleepFocus"));
+  const focus = (m) => (focusNative ? Cap.nativePromise("HuddleSleepFocus", m, {}) : Promise.resolve({ supported: false }));
+  const focusOn = () => prefs().sleepFocus === true;
+  const isAndroidApp = () => !!H().isNativeApp;
+  function focusHelp() {
+    if (focusNative) return "Turns on your phone's Do Not Disturb while you sleep, so other apps stay quiet. Alarms, sleep calls and Huddle calls still come through.";
+    if (isAndroidApp()) return "Update the Huddle app to use this (download the newest version).";
+    return "Works in the Huddle Android app. On iPhone or a computer, Huddle can't quiet other apps, so turn on your device's own Do Not Disturb or Sleep Focus.";
+  }
+  async function setFocus(v) {
+    await P().set("sleepFocus", v);
+    if (v && focusNative) {
+      const st = await focus("status").catch(() => ({}));
+      if (st.supported && !st.access) {
+        toast("Switch Huddle on in the next screen (Do Not Disturb access), then come back.", 6000);
+        await focus("requestAccess").catch(() => {});
+      }
+    }
+    applyFocus();
+  }
+  async function applyFocus() {
+    if (!focusNative) return;
+    if (isOn() && focusOn()) await focus("start").catch(() => {});
+    else await focus("stop").catch(() => {});
+  }
+  // The first time Sleep Mode is turned on: offer it once.
+  function focusAsk() {
+    return new Promise((done) => {
+      const wrap = document.createElement("div");
+      wrap.className = "ch-sheet-wrap sleep-sheet-wrap";
+      wrap.innerHTML = `<div class="ch-sheet sleep-pick" role="dialog" aria-label="Quiet other apps while you sleep?">
+        <h2>${moon}<span>Quiet other apps while you sleep?</span></h2>
+        <p class="sk-sub">${esc(focusHelp())} You can change this any time in Settings.</p>
+        <button type="button" class="btn primary" data-a="yes">Turn on now</button>
+        <button type="button" class="cancel">Maybe later</button></div>`;
+      document.body.appendChild(wrap);
+      const finish = async (yes) => {
+        wrap.remove();
+        try { await P().set("sleepFocusAsked", true); } catch {}
+        if (yes) { try { await setFocus(true); } catch (e) { toast(e.message); } }
+        done();
+      };
+      wrap.querySelector('[data-a="yes"]').onclick = () => finish(true);
+      wrap.querySelector(".cancel").onclick = () => finish(false);
+    });
+  }
+
   // ---------- On and off ----------
   async function turnOnAsk() {
     if (!P()) return;
@@ -226,10 +279,12 @@
     wrap.querySelector('[data-a="on"]').onclick = () => { close(); turnOn(); };
   }
   async function turnOn() {
+    if (!prefs().sleepFocusAsked && !focusOn()) await focusAsk();
     const t = Date.now();
     try { localStorage.setItem("huddle:sleepSince", String(t)); } catch {}
     try { await P().set("sleep", true); } catch (e) { toast(e.message); return; }
     paint();
+    applyFocus();
     T.select("huddle");
     const c = buddyChat();
     if (c) {
@@ -245,6 +300,7 @@
     try { await P().set("sleep", false); } catch (e) { toast(e.message); return; }
     try { localStorage.removeItem("huddle:sleepSince"); } catch {}
     paint();
+    applyFocus();
     T.select("home");
     toast("Sleep Mode off");
   }
@@ -345,9 +401,19 @@
       <section class="set-card"><div class="set-row">
         <span class="set-txt"><b>Huddle Buddy</b><small class="set-buddy-name">${esc(buddyName() || "None yet. Tap a friend on Home to ask one.")}</small></span>
         <button type="button" class="btn" hidden>End</button>
+      </div>
+      <div class="set-row">
+        <span class="set-txt"><b>Quiet other apps in Sleep Mode</b><small>${esc(focusHelp())}</small></span>
+        <button type="button" class="sw sleep-focus-sw" role="switch" aria-checked="${focusOn()}" aria-label="Quiet other apps in Sleep Mode"><span class="track"></span></button>
       </div></section>`;
     body.appendChild(sec);
     const endBtn = sec.querySelector(".btn");
+    const fsw = sec.querySelector(".sleep-focus-sw");
+    fsw.onclick = async () => {
+      const v = !focusOn();
+      fsw.setAttribute("aria-checked", String(v));
+      try { await setFocus(v); } catch (e) { fsw.setAttribute("aria-checked", String(!v)); toast(e.message); }
+    };
     const fill = () => {
       const n = sec.querySelector(".set-buddy-name");
       if (n) n.textContent = buddyName() || "None yet. Tap a friend on Home to ask one.";
@@ -369,6 +435,7 @@
     if (document.hidden) return;
     if (P() && P().load) P().load();
     loadBuddy();
+    applyFocus();
     if (isOn()) loadFriends().then(renderPanel);
   });
   setInterval(() => { if (isOn() && !document.hidden && !panel.hidden) loadFriends().then(renderPanel); }, 30000);

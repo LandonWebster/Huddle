@@ -37,6 +37,8 @@ const DEFAULT_PREFS = {
   sounds: true,      // notifications make a sound
   vibrate: true,     // and vibrate
   sleep: false,      // Sleep Mode: only your Huddle Buddy can call you in Huddle
+  sleepFocus: false, // Sleep Mode quiets other apps (Android app: Do Not Disturb)
+  sleepFocusAsked: false, // the one-time "Quiet other apps?" popup was shown
 };
 // Sleep Mode's Huddle Buddy: one friend's user id (or null). Saved with the switches above.
 // Sleep Mode Caller Exceptions: { friendUserId: "work" | "parent" }. Their Huddle calls ring in Sleep Mode.
