@@ -127,6 +127,7 @@
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
+        <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
         <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
@@ -140,7 +141,6 @@
           <button type="button" role="tab" data-tab="contacts" class="${tab === "contacts" ? "on" : ""}">Contacts</button>
         </div>
         <ul class="ch-list ph-list"><li class="ch-empty">Loading…</li></ul>
-        <button type="button" class="ph-cell-row ph-sos-row ph-sos-bottom" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
       </div>`;
     root.querySelectorAll("[data-tab]").forEach((b) => {
       b.onclick = () => {
@@ -283,9 +283,9 @@
         <span class="ch-sp"></span>
       </header>
       <div class="ch-body ph-cell ph-sos">
-        <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
-        <p class="ph-small ph-center">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved below, <b>not your GPS location</b>. Always say where you are.</p>
         <div class="ph-e911"><p class="ch-empty">Loading…</p></div>
+        <p class="ph-small ph-center ph-sos-note">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved above, <b>not your GPS location</b>. Always say where you are.</p>
+        <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
       </div>`;
     $0('[data-act="back"]').onclick = goBack;
     const b = $0('[data-act="call911"]');
