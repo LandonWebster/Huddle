@@ -290,7 +290,7 @@
           <small>For your safety, 911 and the 933 test start quiet. Ringing at 0 means no ringing sound while the call connects. Call volume is the dispatcher's voice: 1 is the lowest you can still hear.</small>
           <label class="ph-vol"><span>Ringing</span><input type="range" min="0" max="10" step="1" data-vol="ring" aria-label="Ringing volume for 911 calls"><output></output></label>
           <label class="ph-vol"><span>Call volume</span><input type="range" min="0" max="10" step="1" data-vol="call" aria-label="Dispatcher's voice volume for 911 calls"><output></output></label>
-          <small>${H().isNativeApp ? "The Android app sets your phone's volume to these during the call, then puts it back." : "In a browser, these set Huddle's own volume. Your phone's volume buttons still work, so turn them down too if you need to stay hidden."}</small>
+          <p class="ph-vol-note">${H().isNativeApp ? "In the Android app, these set your phone's own call volume during a 911 call, then put it back after." : "These only change Huddle's sound (on the website and the Home Screen app). They don't change your phone's volume, so turn your phone's volume down too."}</p>
         </div>
         <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
       </div>`;
