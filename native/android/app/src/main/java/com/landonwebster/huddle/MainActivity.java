@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebSettings;
 
+import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -34,22 +35,33 @@ public class MainActivity extends BridgeActivity {
 
     // Android 14+ tells the app when someone takes a screenshot of it. The chat screen shows
     // "<name> took a screenshot" to everyone in that chat.
-    private Activity.ScreenCaptureCallback screenshotCallback;
+    private Object screenshotCallback; // an Activity.ScreenCaptureCallback on Android 14+
 
     @Override
     public void onStart() {
         super.onStart();
         if (Build.VERSION.SDK_INT >= 34) {
-            if (screenshotCallback == null) screenshotCallback = HuddleNativePlugin::screenshotTaken;
-            try { registerScreenCaptureCallback(getMainExecutor(), screenshotCallback); } catch (Exception ignored) {}
+            if (screenshotCallback == null) screenshotCallback = Screenshots.make();
+            Screenshots.register(this, screenshotCallback);
         }
     }
 
     @Override
     public void onStop() {
-        if (Build.VERSION.SDK_INT >= 34 && screenshotCallback != null) {
-            try { unregisterScreenCaptureCallback(screenshotCallback); } catch (Exception ignored) {}
-        }
+        if (Build.VERSION.SDK_INT >= 34 && screenshotCallback != null) Screenshots.unregister(this, screenshotCallback);
         super.onStop();
+    }
+
+    @RequiresApi(34)
+    private static final class Screenshots {
+        static Object make() {
+            return (Activity.ScreenCaptureCallback) HuddleNativePlugin::screenshotTaken;
+        }
+        static void register(Activity a, Object cb) {
+            try { a.registerScreenCaptureCallback(a.getMainExecutor(), (Activity.ScreenCaptureCallback) cb); } catch (Exception ignored) {}
+        }
+        static void unregister(Activity a, Object cb) {
+            try { a.unregisterScreenCaptureCallback((Activity.ScreenCaptureCallback) cb); } catch (Exception ignored) {}
+        }
     }
 }
