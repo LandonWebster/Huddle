@@ -4,7 +4,7 @@
 const store = require("./store");
 const pipAi = require("./pip-ai");
 const phone = require("./phone");
-const { notify, route: pushRoute, getPrefs } = require("./notify");
+const { notify, route: pushRoute } = require("./notify");
 const storage = require("./post-storage");
 const alarmServer = require("./alarm-server");
 const crypto = require("crypto");
@@ -71,22 +71,16 @@ function push(userId, msg) {
 const pushChat = (chat, msg, skip) => { for (const u of store.chatPeople(chat)) if (!skip || !skip.has(u)) push(u, msg); };
 const OFFLINE = { online: false, inCall: false };
 
-// Sent / Delivered / Read. "Read" is only shared by people who keep "Send read receipts" on.
-async function shareable(r) {
-  const p = await getPrefs(r.userId);
-  return p.readReceipts === false ? { ...r, read: 0 } : r;
-}
+// Sent / Delivered / Read (always shared: there's no switch to hide them).
 async function receiptsFor(chat, me) {
-  const out = [];
-  for (const r of await store.receipts(chat)) if (r.userId !== me.id) out.push(await shareable(r));
-  return out;
+  return (await store.receipts(chat)).filter((r) => r.userId !== me.id);
 }
 // Tell everyone else in the chat how far this person has got.
 async function sendReceipt(chat, userId) {
   try {
     const r = (await store.receipts(chat)).find((x) => x.userId === userId);
     if (!r) return;
-    const msg = { type: "chat-receipt", chatId: chat.id, ...(await shareable(r)) };
+    const msg = { type: "chat-receipt", chatId: chat.id, ...r };
     const hide = await store.blockSet(userId);
     for (const u of store.chatPeople(chat)) if (u !== userId && !hide.has(u)) push(u, msg);
   } catch {}

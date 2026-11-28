@@ -36,7 +36,6 @@ const DEFAULT_PREFS = {
   alarms: true,      // alarms and timers ring
   sounds: true,      // notifications make a sound
   vibrate: true,     // and vibrate
-  readReceipts: true, // friends see "Read" under their messages once you've seen them
 };
 const prefsCache = new Map();
 async function getPrefs(userId) {
