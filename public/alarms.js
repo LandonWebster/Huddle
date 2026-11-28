@@ -68,6 +68,7 @@
   // (the notification is skipped then) or nothing else can ring.
   async function ringsHere() {
     if (!pref("alarms")) return false;
+    if (window.huddleQuiet) return false; // on a quiet 911 call
     if (nativeRings) return false;
     if (!document.hidden) return true;
     try { return !window.huddleNotify || (await window.huddleNotify.state()) !== "on"; } catch { return true; }

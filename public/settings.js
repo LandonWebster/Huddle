@@ -153,6 +153,7 @@
 
   // A ringtone for calls that ring inside the app (Huddle invites). Returns stop().
   function ringtone(kind) {
+    if (window.huddleQuiet) return () => {}; // on a quiet 911 call
     let ctx = null, loop = null, vib = null;
     const on = (k) => prefs[k] !== false;
     if (on("sounds")) try {

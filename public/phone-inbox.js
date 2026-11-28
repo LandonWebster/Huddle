@@ -285,9 +285,23 @@
       <div class="ch-body ph-cell ph-sos">
         <div class="ph-e911"><p class="ch-empty">Loading…</p></div>
         <p class="ph-small ph-center ph-sos-note">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved above, <b>not your GPS location</b>. Always say where you are.</p>
+        <div class="set-row ph-quiet911">
+          <span class="set-txt"><b>Quiet 911 calls</b><small>For your safety: no ringing sound while 911 or the 933 test connects, and Huddle stays silent during the call. You still hear the dispatcher. Turn your phone's volume down too if you need to stay hidden.</small></span>
+          <button type="button" class="sw" role="switch" aria-checked="true" aria-label="Quiet 911 calls" data-act="quiet911"><span class="track"></span></button>
+        </div>
         <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
       </div>`;
     $0('[data-act="back"]').onclick = goBack;
+    const qs = $0('[data-act="quiet911"]');
+    let quiet = true;
+    try { quiet = localStorage.getItem("huddle:quiet911") !== "0"; } catch {}
+    qs.setAttribute("aria-checked", String(quiet));
+    qs.onclick = () => {
+      quiet = qs.getAttribute("aria-checked") !== "true";
+      qs.setAttribute("aria-checked", String(quiet));
+      try { localStorage.setItem("huddle:quiet911", quiet ? "1" : "0"); } catch {}
+      toast(quiet ? "911 calls will be quiet" : "911 calls will ring normally");
+    };
     const b = $0('[data-act="call911"]');
     let armed = null;
     b.onclick = () => {

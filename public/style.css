@@ -1338,3 +1338,4 @@ body.tabs-on #lobby .brand > div { flex: 1; min-width: 0; }
 .home-notify .btn { flex: none; }
 .home-notify-x { flex: none; }
 .ph-sos-note { margin-top: 22px; }
+.ph-quiet911 { margin: 18px 0 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass); }

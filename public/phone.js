@@ -280,12 +280,37 @@
 
   // 911 (and 933, Twilio's free test that reads back your registered address). Never blocked:
   // any phone call already going is hung up first.
+  // Quiet 911 (on unless switched off on the 911 page): no ringing sound while it connects, and
+  // Huddle makes no sounds of its own during the call, in case you need to stay hidden. The
+  // dispatcher's voice still plays as soon as they answer.
+  const quiet911 = () => { try { return localStorage.getItem("huddle:quiet911") !== "0"; } catch { return true; } };
+  function silenceUntilAnswered(c) {
+    let answered = false;
+    const hush = () => {
+      if (answered) return;
+      try { const st = c.getRemoteStream && c.getRemoteStream(); if (st) for (const t of st.getAudioTracks()) t.enabled = false; } catch {}
+    };
+    c.on("ringing", hush);
+    c.on("volume", hush);
+    c.on("accept", () => {
+      answered = true;
+      try { const st = c.getRemoteStream && c.getRemoteStream(); if (st) for (const t of st.getAudioTracks()) t.enabled = true; } catch {}
+    });
+  }
   async function dialEmergency(short) {
     if (call) { try { call.disconnect(); } catch {} await new Promise((r) => setTimeout(r, 300)); }
     audioCtx();
     const d = await getDevice(false, true);
     if (!d) throw new Error("Couldn't reach the phone service. Use your phone's own dialer to call 911.");
+    const quiet = quiet911();
     const c = await d.connect({ params: { To: short } });
+    if (quiet) {
+      silenceUntilAnswered(c);
+      window.huddleQuiet = true; // other Huddle sounds stay off (settings.js, alarms.js)
+      const done = () => { window.huddleQuiet = false; };
+      c.on("disconnect", done); c.on("cancel", done); c.on("reject", done); c.on("error", done);
+      try { if (navigator.vibrate) navigator.vibrate(0); } catch {}
+    }
     wire(c, short);
     setLive(short === "911" ? "Calling 911…" : "Calling the 933 address test…");
     show(true);
