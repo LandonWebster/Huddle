@@ -285,23 +285,25 @@
       <div class="ch-body ph-cell ph-sos">
         <div class="ph-e911"><p class="ch-empty">Loading…</p></div>
         <p class="ph-small ph-center ph-sos-note">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved above, <b>not your GPS location</b>. Always say where you are.</p>
-        <div class="set-row ph-quiet911">
-          <span class="set-txt"><b>Quiet 911 calls</b><small>For your safety: no ringing sound while 911 or the 933 test connects, and Huddle stays silent during the call. You still hear the dispatcher. Turn your phone's volume down too if you need to stay hidden.</small></span>
-          <button type="button" class="sw" role="switch" aria-checked="true" aria-label="Quiet 911 calls" data-act="quiet911"><span class="track"></span></button>
+        <div class="ph-quiet911">
+          <b>911 call volume</b>
+          <small>For your safety, 911 and the 933 test start quiet. Ringing at 0 means no ringing sound while the call connects. Call volume is the dispatcher's voice: 1 is the lowest you can still hear.</small>
+          <label class="ph-vol"><span>Ringing</span><input type="range" min="0" max="10" step="1" data-vol="ring" aria-label="Ringing volume for 911 calls"><output></output></label>
+          <label class="ph-vol"><span>Call volume</span><input type="range" min="0" max="10" step="1" data-vol="call" aria-label="Dispatcher's voice volume for 911 calls"><output></output></label>
+          <small>${H().isNativeApp ? "The Android app sets your phone's volume to these during the call, then puts it back." : "In a browser, these set Huddle's own volume. Your phone's volume buttons still work, so turn them down too if you need to stay hidden."}</small>
         </div>
         <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
       </div>`;
     $0('[data-act="back"]').onclick = goBack;
-    const qs = $0('[data-act="quiet911"]');
-    let quiet = true;
-    try { quiet = localStorage.getItem("huddle:quiet911") !== "0"; } catch {}
-    qs.setAttribute("aria-checked", String(quiet));
-    qs.onclick = () => {
-      quiet = qs.getAttribute("aria-checked") !== "true";
-      qs.setAttribute("aria-checked", String(quiet));
-      try { localStorage.setItem("huddle:quiet911", quiet ? "1" : "0"); } catch {}
-      toast(quiet ? "911 calls will be quiet" : "911 calls will ring normally");
-    };
+    for (const input of root.querySelectorAll("[data-vol]")) {
+      const key = "huddle:e911" + input.dataset.vol, def = input.dataset.vol === "ring" ? 0 : 1;
+      let v = def;
+      try { const x = localStorage.getItem(key); if (x != null && x !== "") v = Number(x); } catch {}
+      input.value = String(v);
+      const out = input.parentNode.querySelector("output");
+      out.textContent = input.value;
+      input.oninput = () => { out.textContent = input.value; try { localStorage.setItem(key, input.value); } catch {} };
+    }
     const b = $0('[data-act="call911"]');
     let armed = null;
     b.onclick = () => {

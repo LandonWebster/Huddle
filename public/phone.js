@@ -280,37 +280,61 @@
 
   // 911 (and 933, Twilio's free test that reads back your registered address). Never blocked:
   // any phone call already going is hung up first.
-  // Quiet 911 (on unless switched off on the 911 page): no ringing sound while it connects, and
-  // Huddle makes no sounds of its own during the call, in case you need to stay hidden. The
-  // dispatcher's voice still plays as soon as they answer.
-  const quiet911 = () => { try { return localStorage.getItem("huddle:quiet911") !== "0"; } catch { return true; } };
-  function silenceUntilAnswered(c) {
-    let answered = false;
-    const hush = () => {
-      if (answered) return;
-      try { const st = c.getRemoteStream && c.getRemoteStream(); if (st) for (const t of st.getAudioTracks()) t.enabled = false; } catch {}
+  // 911 volumes (set on the 911 page; for safety they start quiet): Ringing 0-10 (default 0, no
+  // ringing sound while it connects) and Call volume 0-10 (default 1, the dispatcher's voice
+  // barely audible). Huddle makes no sounds of its own during the call. The Android app also sets
+  // the phone's own volume for the call and puts it back afterwards.
+  function vol911(k, def) {
+    try { const x = localStorage.getItem("huddle:e911" + k); if (x != null && x !== "") return Math.max(0, Math.min(10, Number(x) || 0)); } catch {}
+    return def;
+  }
+  // The call's sound plays through a volume knob of ours instead of the phone service's own player.
+  function quietPlayback(c, ringVol, callVol) {
+    const ac = audioCtx();
+    const gain = ac.createGain();
+    gain.gain.value = ringVol / 10;
+    gain.connect(ac.destination);
+    let src = null, el = null, answered = false;
+    const hook = () => {
+      try {
+        const st = c.getRemoteStream && c.getRemoteStream();
+        const t = st && st.getAudioTracks()[0];
+        if (!t) return;
+        if (t.enabled) t.enabled = false; // silence the phone service's own player
+        if (src) return;
+        const mine = new MediaStream([t.clone()]);
+        mine.getAudioTracks()[0].enabled = true;
+        // Chrome only delivers a call's sound to Web Audio while it's also attached to a (muted) element.
+        el = new Audio(); el.muted = true; el.srcObject = mine; el.play().catch(() => {});
+        src = ac.createMediaStreamSource(mine);
+        src.connect(gain);
+      } catch {}
     };
-    c.on("ringing", hush);
-    c.on("volume", hush);
-    c.on("accept", () => {
-      answered = true;
-      try { const st = c.getRemoteStream && c.getRemoteStream(); if (st) for (const t of st.getAudioTracks()) t.enabled = true; } catch {}
-    });
+    c.on("ringing", hook);
+    c.on("volume", hook);
+    c.on("accept", () => { answered = true; gain.gain.value = callVol / 10; hook(); });
+    const end = () => {
+      try { if (src) src.disconnect(); gain.disconnect(); } catch {}
+      if (el) { el.srcObject = null; el = null; }
+    };
+    c.on("disconnect", end); c.on("cancel", end); c.on("reject", end); c.on("error", end);
   }
   async function dialEmergency(short) {
     if (call) { try { call.disconnect(); } catch {} await new Promise((r) => setTimeout(r, 300)); }
     audioCtx();
     const d = await getDevice(false, true);
     if (!d) throw new Error("Couldn't reach the phone service. Use your phone's own dialer to call 911.");
-    const quiet = quiet911();
+    const ringVol = vol911("ring", 0), callVol = vol911("call", 1);
+    if (H.isNativeApp && H.native) H.native("setCallVolume", { ring: ringVol, call: callVol }).catch(() => {});
     const c = await d.connect({ params: { To: short } });
-    if (quiet) {
-      silenceUntilAnswered(c);
-      window.huddleQuiet = true; // other Huddle sounds stay off (settings.js, alarms.js)
-      const done = () => { window.huddleQuiet = false; };
-      c.on("disconnect", done); c.on("cancel", done); c.on("reject", done); c.on("error", done);
-      try { if (navigator.vibrate) navigator.vibrate(0); } catch {}
-    }
+    quietPlayback(c, ringVol, callVol);
+    window.huddleQuiet = true; // other Huddle sounds stay off (settings.js, alarms.js)
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch {}
+    const done = () => {
+      window.huddleQuiet = false;
+      if (H.isNativeApp && H.native) H.native("restoreVolume", {}).catch(() => {});
+    };
+    c.on("disconnect", done); c.on("cancel", done); c.on("reject", done); c.on("error", done);
     wire(c, short);
     setLive(short === "911" ? "Calling 911…" : "Calling the 933 address test…");
     show(true);
