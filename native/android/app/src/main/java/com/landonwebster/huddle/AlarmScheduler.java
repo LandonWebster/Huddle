@@ -26,7 +26,10 @@ import java.util.Calendar;
  * on time even when Huddle is closed, the screen is off, or the phone restarted (BootReceiver).
  *
  * Saved in SharedPreferences "huddle_alarms":
- *   alarms  [{ id, h, m, days: [0..6 Sun..Sat], label, on, pip }]
+ *   alarms  [{ id, h, m, days: [0..6 Sun..Sat], label, on, pip, ... }] — each alarm and each of
+ *           its extra alarms (base = the alarm's id, idx 1..count), with its sound, look, colors
+ *           and the phone paths of its song and picture (see alarms.js setNative)
+ *   skip_<id>  "Skip the other alarms" was tapped: that alarm's extras wait until then (ms)
  *   timer   when a running timer ends (ms), or 0
  *   snooze  when a snoozed alarm rings again (ms), or 0, with snoozeId
  *   name    first name, for Pip's "Good morning"
@@ -97,7 +100,10 @@ final class AlarmScheduler {
         JSONArray list = alarms(c);
         for (int i = 0; i < list.length(); i++) {
             JSONObject a = list.optJSONObject(i);
-            long t = nextAt(a, now);
+            if (a == null) continue;
+            // "Skip the other alarms" was tapped: this alarm's extra alarms wait until after then.
+            long from = Math.max(now, Math.max(a.optLong("skipUntil", 0), p.getLong("skip_" + a.optString("base", a.optString("id")), 0)));
+            long t = nextAt(a, from);
             if (t > 0 && (best == 0 || t < best)) { best = t; kind = "alarm"; id = a.optString("id"); }
         }
         long timer = p.getLong("timer", 0);
@@ -168,6 +174,13 @@ final class AlarmScheduler {
     static void showRinging(Context c, String kind, String id, String title, String text) {
         SharedPreferences p = prefs(c);
         boolean sound = p.getBoolean("sound", true), vibrate = p.getBoolean("vibrate", true);
+        // An alarm with its own song or sound and vibration (the alarm editor) plays them itself
+        // (AlarmPlayer), so its notification stays quiet; otherwise the phone's alarm sound rings.
+        JSONObject a = "alarm".equals(kind) ? find(c, id) : null;
+        boolean ownSound = sound && AlarmPlayer.hasSound(a), ownVib = vibrate && AlarmPlayer.hasVibration(a);
+        if (ownSound || ownVib) AlarmPlayer.start(c, a, ownSound, ownVib);
+        sound = sound && !ownSound;
+        vibrate = vibrate && !ownVib;
         Intent full = new Intent(c, AlarmActivity.class)
             .putExtra("kind", kind).putExtra("id", id).putExtra("title", title).putExtra("text", text)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_USER_ACTION | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -186,7 +199,7 @@ final class AlarmScheduler {
             .setTimeoutAfter(10 * 60 * 1000L)
             .setDeleteIntent(action(c, ACTION_STOP, kind, id, 35));
         if (!"timer".equals(kind)) b.addAction(0, "Snooze 9 min", action(c, ACTION_SNOOZE, kind, id, 33));
-        b.addAction(0, "Stop", action(c, ACTION_STOP, kind, id, 34));
+        b.addAction(0, "Turn off", action(c, ACTION_STOP, kind, id, 34));
         Notification n = b.build();
         n.flags |= Notification.FLAG_INSISTENT;
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -196,6 +209,7 @@ final class AlarmScheduler {
     static void stopRinging(Context c) {
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(NOTIFICATION_ID);
+        AlarmPlayer.stop();
         AlarmActivity.finishShowing();
     }
 

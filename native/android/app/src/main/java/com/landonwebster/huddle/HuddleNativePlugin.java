@@ -333,6 +333,16 @@ public class HuddleNativePlugin extends Plugin {
         call.resolve(new JSObject().put("exact", AlarmScheduler.canExact(ctx)));
     }
 
+    /** Songs, photos and videos for alarms, saved in the app so the phone's alarm can use them (AlarmMedia). */
+    @PluginMethod
+    public void alarmMedia(PluginCall call) {
+        try {
+            call.resolve(AlarmMedia.handle(getContext(), call.getData()));
+        } catch (Exception e) {
+            call.reject("Couldn't save that for the alarm", e);
+        }
+    }
+
     // ---------- Notifications ----------
     @PluginMethod
     public void notifyStatus(PluginCall call) {

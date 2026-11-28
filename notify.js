@@ -106,7 +106,9 @@ async function notify(userId, note) {
       if (!note) return;
     }
     await vapid();
-    const subs = await store.pushSubs(userId);
+    // note.appleOnly: just iPhones and iPads (Apple's push service), for alarms that ring again.
+    const subs = (await store.pushSubs(userId)).filter((s) => !note.appleOnly || /^https:\/\/[^/]*push\.apple\.com\//.test(s.endpoint));
+    delete note.appleOnly;
     const payload = JSON.stringify(note);
     await Promise.all(subs.map((sub) =>
       webpush.sendNotification(sub, payload, { TTL: note.ttl || 3600, urgency: note.kind === "call" || note.kind === "alarm" ? "high" : "normal" })
