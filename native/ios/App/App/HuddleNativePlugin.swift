@@ -213,7 +213,7 @@ public class HuddleNativePlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesize
         let settings = HuddleAlarms.Settings(name: call.getString("name") ?? "",
                                              sound: call.getBool("sound") ?? true)
         Task {
-            let exact = await HuddleAlarms.shared.set(list.compactMap(HuddleAlarms.Alarm.init), timerEndMs: timer, settings: settings)
+            let exact = await HuddleAlarms.shared.set(list.compactMap(HuddleAlarms.Entry.init), timerEndMs: timer, settings: settings)
             call.resolve(["exact": exact])
         }
     }
