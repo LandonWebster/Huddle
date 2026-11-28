@@ -1337,3 +1337,12 @@ body.tabs-on #lobby .brand > div { flex: 1; min-width: 0; }
 .home-notify small { font-size: 13px; color: var(--muted); line-height: 1.35; }
 .home-notify .btn { flex: none; }
 .home-notify-x { flex: none; }
+.ph-sos-note { margin-top: 22px; }
+.ph-quiet911 { margin: 18px 0 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass); }
+.ph-quiet911 { display: flex; flex-direction: column; gap: 8px; }
+.ph-quiet911 small { font-size: 13px; color: var(--muted); line-height: 1.4; }
+.ph-vol { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 14px; }
+.ph-vol span { width: 92px; flex: none; }
+.ph-vol input { flex: 1; accent-color: var(--accent-2); min-width: 0; }
+.ph-vol output { width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
+.ph-vol-note { margin: 4px 0 0; font-size: 13.5px; font-weight: 700; color: var(--text); line-height: 1.4; }

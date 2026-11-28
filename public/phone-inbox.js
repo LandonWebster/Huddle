@@ -98,7 +98,15 @@
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
   // For the tab bar (public/tabs.js).
-  window.HuddlePhoneScreen = { hide: () => hide() };
+  // openCell: the "Calls to your cell" setup (from Settings).
+  window.HuddlePhoneScreen = {
+    hide: () => hide(),
+    openCell: () => {
+      if (window.HuddleTabs) window.HuddleTabs.select("phone");
+      else if (root.hidden) openBtn.click();
+      setTimeout(openCell, 50);
+    },
+  };
   openBtn.onclick = () => {
     if (!token()) { toast("Sign in to use the phone"); return; }
     show();
@@ -119,6 +127,7 @@
       <div class="ch-body">
         <p class="ph-mine" hidden></p>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
+        <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
         <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
@@ -132,7 +141,6 @@
           <button type="button" role="tab" data-tab="contacts" class="${tab === "contacts" ? "on" : ""}">Contacts</button>
         </div>
         <ul class="ch-list ph-list"><li class="ch-empty">Loading…</li></ul>
-        <button type="button" class="ph-cell-row ph-sos-row ph-sos-bottom" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
       </div>`;
     root.querySelectorAll("[data-tab]").forEach((b) => {
       b.onclick = () => {
@@ -275,11 +283,27 @@
         <span class="ch-sp"></span>
       </header>
       <div class="ch-body ph-cell ph-sos">
-        <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
-        <p class="ph-small ph-center">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved below, <b>not your GPS location</b>. Always say where you are.</p>
         <div class="ph-e911"><p class="ch-empty">Loading…</p></div>
+        <p class="ph-small ph-center ph-sos-note">In an emergency, use your phone's own dialer if you can. Huddle's 911 needs internet, and the dispatcher sees the address saved above, <b>not your GPS location</b>. Always say where you are.</p>
+        <div class="ph-quiet911">
+          <b>911 call volume</b>
+          <small>For your safety, 911 and the 933 test start quiet. Ringing at 0 means no ringing sound while the call connects. Call volume is the dispatcher's voice: 1 is the lowest you can still hear.</small>
+          <label class="ph-vol"><span>Ringing</span><input type="range" min="0" max="10" step="1" data-vol="ring" aria-label="Ringing volume for 911 calls"><output></output></label>
+          <label class="ph-vol"><span>Call volume</span><input type="range" min="0" max="10" step="1" data-vol="call" aria-label="Dispatcher's voice volume for 911 calls"><output></output></label>
+          <p class="ph-vol-note">${H().isNativeApp ? "In the Android app, these set your phone's own call volume during a 911 call, then put it back after." : "These only change Huddle's sound (on the website and the Home Screen app). They don't change your phone's volume, so turn your phone's volume down too."}</p>
+        </div>
+        <button class="btn ph-sos-btn" type="button" data-act="call911">Call 911</button>
       </div>`;
     $0('[data-act="back"]').onclick = goBack;
+    for (const input of root.querySelectorAll("[data-vol]")) {
+      const key = "huddle:e911" + input.dataset.vol, def = input.dataset.vol === "ring" ? 0 : 1;
+      let v = def;
+      try { const x = localStorage.getItem(key); if (x != null && x !== "") v = Number(x); } catch {}
+      input.value = String(v);
+      const out = input.parentNode.querySelector("output");
+      out.textContent = input.value;
+      input.oninput = () => { out.textContent = input.value; try { localStorage.setItem(key, input.value); } catch {} };
+    }
     const b = $0('[data-act="call911"]');
     let armed = null;
     b.onclick = () => {
@@ -415,7 +439,9 @@
     let j;
     try { j = await api("GET", "cell"); } catch { return; }
     if (!root.contains(row)) return;
-    row.hidden = false;
+    // Done setting up forwarding: no banner (Settings > Calls to your cell opens it again).
+    row.hidden = !!(j.forwardDone && j.huddleNumber);
+    if (row.hidden) return;
     row.querySelector("span").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Make Huddle ring when you miss a call on your cell";
     row.querySelector("b").textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
   }
@@ -477,7 +503,11 @@
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
         </ul>
         <p class="ph-small">The number at the end of the AT&amp;T/T-Mobile code (<b class="ph-secs">${secs}</b>) is how many seconds your cell rings before the call goes to Huddle. Verizon's code has no timer: your cell rings about 4 or 5 times (around 25 seconds) first. To change the time later, just dial the new code.</p>
-        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>`;
+        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>
+        ${j.forwardDone
+          ? `<p class="ph-ok">&#10003; Forwarding is set up. The setup button is hidden from the Phone screen. You can find this page again in Settings.</p>
+             <button class="btn" type="button" data-act="fwd-undo">Show the setup button again</button>`
+          : `<button class="btn primary" type="button" data-act="fwd-done">I've set this up</button>`}`;
     }
     // Optional: your cell as caller ID.
     let cellHtml = "";
@@ -542,6 +572,16 @@
       if (e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Tap again to give it up for good"; return; }
       try { await api("POST", "billing", { action: "release-number" }); toast("Number given up. Turn off forwarding on your cell."); openCell(); }
       catch (x) { toast(x.message, 5000); }
+    });
+    on('[data-act="fwd-done"]', async (e) => {
+      e.target.disabled = true;
+      try { renderCell(await api("POST", "cell", { action: "forward-done", done: true })); toast("Got it. The setup button is hidden now."); }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
+    });
+    on('[data-act="fwd-undo"]', async (e) => {
+      e.target.disabled = true;
+      try { renderCell(await api("POST", "cell", { action: "forward-done", done: false })); }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
     });
     on('[data-act="unlink"]', async () => {
       try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked"); } catch (x) { toast(x.message, 5000); }

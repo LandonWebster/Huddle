@@ -23,6 +23,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.media.AudioAttributes;
+import android.media.AudioManager;
 import android.media.RingtoneManager;
 import android.os.Build;
 import android.provider.Settings;
@@ -52,6 +53,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  listen / stopListening      talk to Pip: speech to text (partial words arrive as "speechPartial")
  *  setAlarms                   the Alarms tab's alarms and timer, as real phone alarms (AlarmScheduler)
  *  notifyStatus / requestNotifications / openAlarmSettings   permission to notify and to ring on time
+ *  setCallVolume / restoreVolume   quiet 911 calls: the phone's volume for the call, then back
  *  showNotification            a chat or call-invite notification while Huddle is in the background
  *
  * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
@@ -426,5 +428,48 @@ public class HuddleNativePlugin extends Plugin {
         intent.removeExtra("huddle_url");
         String js = "window.huddleOpen && window.huddleOpen(" + JSONObject.quote(url) + ")";
         getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(js, null));
+    }
+
+    // ---------- 911 call volume ----------
+    // For safety, 911 calls start quiet: the phone's call and media volume go to the chosen level
+    // (0-10; 1 is the lowest you can hear) and the ringer to the chosen level, then all go back.
+    private int[] savedVolumes = null;
+    private static final int[] VOLUME_STREAMS = { AudioManager.STREAM_VOICE_CALL, AudioManager.STREAM_MUSIC, AudioManager.STREAM_RING };
+
+    private static int level(AudioManager am, int stream, int of10, boolean audibleFloor) {
+        int max = am.getStreamMaxVolume(stream);
+        int min = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? am.getStreamMinVolume(stream) : 0;
+        if (of10 <= 0) return min;
+        int v = Math.round(max * of10 / 10f);
+        return Math.max(audibleFloor ? Math.max(1, min) : min, Math.min(max, v));
+    }
+
+    @PluginMethod
+    public void setCallVolume(PluginCall call) {
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) { call.resolve(); return; }
+        int callVol = Math.max(0, Math.min(10, call.getInt("call", 1)));
+        int ringVol = Math.max(0, Math.min(10, call.getInt("ring", 0)));
+        if (savedVolumes == null) {
+            savedVolumes = new int[VOLUME_STREAMS.length];
+            for (int i = 0; i < VOLUME_STREAMS.length; i++) savedVolumes[i] = am.getStreamVolume(VOLUME_STREAMS[i]);
+        }
+        try { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, level(am, AudioManager.STREAM_VOICE_CALL, callVol, true), 0); } catch (Exception ignored) {}
+        try { am.setStreamVolume(AudioManager.STREAM_MUSIC, level(am, AudioManager.STREAM_MUSIC, callVol, true), 0); } catch (Exception ignored) {}
+        // Turning the ringer all the way down can need Do Not Disturb access; if Android says no, it's left as is.
+        try { am.setStreamVolume(AudioManager.STREAM_RING, level(am, AudioManager.STREAM_RING, ringVol, false), 0); } catch (Exception ignored) {}
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void restoreVolume(PluginCall call) {
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (am != null && savedVolumes != null) {
+            for (int i = 0; i < VOLUME_STREAMS.length; i++) {
+                try { am.setStreamVolume(VOLUME_STREAMS[i], savedVolumes[i], 0); } catch (Exception ignored) {}
+            }
+        }
+        savedVolumes = null;
+        call.resolve();
     }
 }
