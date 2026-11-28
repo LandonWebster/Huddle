@@ -28,6 +28,34 @@
   const normalize = (n) => (P() ? P().normalize(n) : null);
   const toast = (m, ms) => (H().toast ? H().toast(m, ms) : null);
   const token = () => { try { return localStorage.getItem("huddle:token"); } catch { return null; } };
+  // The top of the Phone screen (your number, balance, setup rows, "Calls show", notifications)
+  // fills in from the server a moment after it opens. To keep it from jumping or flickering, the
+  // last layout is remembered and drawn right away, then corrected if anything changed.
+  const TOP = [".ph-mine", ".ph-bal-row", '[data-row="e911"]', '[data-row="cell"]', ".ph-show", ".ph-notify"];
+  const TOP_KEY = "huddle:phoneTop";
+  const topOwner = () => (token() || "").slice(-12);
+  let topSaveTimer = null;
+  function saveTop() {
+    clearTimeout(topSaveTimer);
+    topSaveTimer = setTimeout(() => {
+      if (view !== "list") return;
+      const els = TOP.map((sel) => root.querySelector(sel));
+      if (els.some((e) => !e)) return;
+      const snap = { who: topOwner(), els: els.map((e) => ({ hidden: e.hidden, html: e.innerHTML })) };
+      try { localStorage.setItem(TOP_KEY, JSON.stringify(snap)); } catch {}
+    }, 0);
+  }
+  function drawSavedTop() {
+    let snap = null;
+    try { snap = JSON.parse(localStorage.getItem(TOP_KEY) || "null"); } catch {}
+    if (!snap || snap.who !== topOwner() || !Array.isArray(snap.els) || snap.els.length !== TOP.length) return;
+    TOP.forEach((sel, i) => {
+      const e = root.querySelector(sel), c = snap.els[i];
+      if (!e || !c) return;
+      e.innerHTML = c.html;
+      e.hidden = !!c.hidden;
+    });
+  }
   async function api(method, path, body) {
     const r = await fetch("/api/phone/" + path, {
       method,
@@ -134,13 +162,15 @@
         <p class="ph-tip" role="status" hidden>You can change this anytime in Settings.</p>
         <p class="ph-mine" hidden></p>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
-        <div class="ph-setup-row" data-row="e911">
-          <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
-          <button type="button" class="ph-notnow" data-notnow="e911">Not now</button>
+        <div class="ph-setup-row ph-sos-row" data-row="e911">
+          <span class="ph-setup-txt">Emergency: call 911</span>
+          <button type="button" class="ph-pill skip" data-notnow="e911">Not now</button>
+          <button type="button" class="ph-pill go" data-act="e911">Open</button>
         </div>
         <div class="ph-setup-row" data-row="cell" hidden>
-          <button type="button" class="ph-cell-row" data-act="cell"><span></span><b></b></button>
-          <button type="button" class="ph-notnow" data-notnow="cell">Not now</button>
+          <span class="ph-setup-txt"></span>
+          <button type="button" class="ph-pill skip" data-notnow="cell">Not now</button>
+          <button type="button" class="ph-pill go" data-act="cell"></button>
         </div>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
@@ -162,6 +192,7 @@
         loadList();
       };
     });
+    drawSavedTop();
     renderNotify();
     renderCallerId();
     renderCellRow();
@@ -170,6 +201,7 @@
       b.onclick = async () => {
         const which = b.dataset.notnow;
         b.closest(".ph-setup-row").hidden = true;
+        saveTop();
         showTip();
         try { await api("POST", "cell", which === "cell" ? { action: "forward-done", done: true } : { action: "hide-e911" }); } catch {}
       };
@@ -203,6 +235,8 @@
     if (view !== "list") return;
     const mine = root.querySelector(".ph-mine");
     if (j.number) { mine.hidden = false; mine.textContent = `Your Huddle number: ${pretty(j.number)} (call-backs and voicemail)`; }
+    else mine.hidden = true;
+    saveTop();
     const list = root.querySelector(".ph-list");
     if (tab === "contacts") return renderContacts(list);
     return renderCalls(list);
@@ -410,6 +444,7 @@
     row.hidden = false;
     row.classList.toggle("low", bill.balance <= 0.05);
     row.querySelector("span").textContent = "Phone balance: $" + Math.max(0, bill.balance).toFixed(2);
+    saveTop();
   }
   function billRow(i) {
     const t = fullTime(i.at);
@@ -481,9 +516,10 @@
     // Set up (or "Not now"): no row. Settings > Phone opens these setups again.
     if (sos) sos.hidden = !!j.e911Hidden;
     wrap.hidden = !!j.forwardDone;
-    if (wrap.hidden) return;
-    row.querySelector("span").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Make Huddle ring when you miss a call on your cell";
-    row.querySelector("b").textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
+    if (wrap.hidden) return saveTop();
+    wrap.querySelector(".ph-setup-txt").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Ring Huddle when you miss a cell call";
+    row.textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
+    saveTop();
   }
   let cellPoll = null, cellStepsShown = false;
   async function openCell() {
@@ -659,7 +695,8 @@
     if (!box) return;
     let j;
     try { j = await api("GET", "callerid"); } catch { return; }
-    if (!root.contains(box) || !j.canChoose) return;
+    if (!root.contains(box)) return;
+    if (!j.canChoose) { box.hidden = true; return saveTop(); }
     const sel = box.querySelector("select");
     sel.innerHTML = j.options.map((o) => `<option value="${esc(o.number)}"${o.number === j.selected ? " selected" : ""}>${esc(o.label)}: ${esc(pretty(o.number))}</option>`).join("");
     box.hidden = false;
@@ -667,6 +704,7 @@
       try { await api("POST", "callerid", { number: sel.value }); toast("Saved. Your calls show " + pretty(sel.value)); }
       catch (e) { toast(e.message, 5000); renderCallerId(); }
     };
+    saveTop();
   }
 
   // ---------- Notifications on/off ----------
@@ -680,6 +718,7 @@
     const on = st === "on";
     label.textContent = on ? "Notifications are on for calls and chats." : "Get notified about calls and chats, even when Huddle is closed.";
     b.textContent = on ? "Turn off" : "Turn on";
+    saveTop();
     b.onclick = async () => {
       b.disabled = true;
       try { await (on ? window.huddleNotify.disable() : window.huddleNotify.enable()); toast(on ? "Notifications off" : "Notifications on"); }

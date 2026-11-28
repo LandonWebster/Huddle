@@ -1346,9 +1346,16 @@ body.tabs-on #lobby .brand > div { flex: 1; min-width: 0; }
 .ph-vol input { flex: 1; accent-color: var(--accent-2); min-width: 0; }
 .ph-vol output { width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
 .ph-vol-note { margin: 4px 0 0; font-size: 13.5px; font-weight: 700; color: var(--text); line-height: 1.4; }
-.ph-setup-row { display: flex; align-items: stretch; gap: 8px; margin: 0 0 10px; }
+/* Setup rows on the Phone screen: one card, a filled Open/Setup pill and an outlined Not now pill. */
+.ph-setup-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px 10px 10px 14px; border-radius: 14px; border: 1px solid rgba(34,211,238,.25); background: rgba(43,89,255,.10); font-size: 14px; }
 .ph-setup-row[hidden] { display: none; }
-.ph-setup-row .ph-cell-row { margin: 0; flex: 1; min-width: 0; }
-.ph-notnow { flex: none; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.ph-setup-txt { flex: 1; min-width: 0; }
+.ph-pill { flex: none; padding: 7px 13px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.ph-pill.go { border: 1px solid #22d3ee; background: #22d3ee; color: #06121a; }
+.ph-pill.skip { border: 1px solid rgba(34,211,238,.35); background: transparent; color: #22d3ee; }
+.ph-setup-row.ph-sos-row { border-color: rgba(248,113,113,.45); background: rgba(239,68,68,.10); }
+.ph-sos-row .ph-pill.go { border-color: #f87171; background: #f87171; color: #1a0606; }
+.ph-sos-row .ph-pill.skip { border-color: rgba(248,113,113,.5); color: #f87171; }
+.ph-pill:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .ph-tip { margin: 0 0 10px; padding: 10px 14px; border-radius: 12px; background: rgba(34,211,238,.12); border: 1px solid rgba(34,211,238,.35); color: var(--text); font-size: 14px; font-weight: 600; }
 .ph-tip[hidden] { display: none; }
