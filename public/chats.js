@@ -93,6 +93,7 @@
     if (m.type === "phone-update") { window.dispatchEvent(new CustomEvent("huddle:phone-live", { detail: m })); return; }
     if (m.type === "presence") { updatePresence(m); return; }
     if (m.type === "call-invite") { showInvite(m); return; }
+    if (m.type === "buddy") { window.dispatchEvent(new CustomEvent("huddle:buddy", { detail: m })); return; }
     if (m.type === "alarms-changed") { window.dispatchEvent(new Event("huddle:alarms-changed")); return; }
     if (m.type === "auth-failed") { signedOut(); return; }
     if (m.type === "chats-changed") { if (view === "list") loadList(); else refreshBadge(); loadLobbyFriends(); return; }
@@ -401,6 +402,8 @@
       </div>
       <button type="button" class="cancel">Close</button></div>`;
     (root.hidden ? document.body : root).appendChild(wrap);
+    // Huddle Sleep Mode Caller Exception (sleep.js), for friends.
+    if (c && window.HuddleSleep) window.HuddleSleep.profileRow(wrap.querySelector(".pf-actions"), u);
     const close = () => wrap.remove();
     wrap.onclick = (e) => { if (e.target === wrap) close(); };
     wrap.querySelector(".cancel").onclick = close;
@@ -1160,6 +1163,8 @@
   function showInvite(m) {
     const h = H();
     if (h.inCall && h.room === m.room) return;
+    // Sleep Mode (sleep.js): only your Huddle Buddy's calls come through.
+    if (window.HuddleSleep && !window.HuddleSleep.allowsCall(m.from && m.from.id)) return;
     if (inviteEl) inviteEl.remove();
     clearTimeout(inviteTimer);
     inviteEl = document.createElement("div");

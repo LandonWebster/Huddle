@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(HuddleNativePlugin.class);
+        registerPlugin(SleepFocusPlugin.class);
         super.onCreate(savedInstanceState);
         if (getBridge() != null && getBridge().getWebView() != null) {
             WebSettings s = getBridge().getWebView().getSettings();
