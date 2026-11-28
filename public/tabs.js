@@ -117,6 +117,9 @@
 
   function select(id) {
     if (!TABS.some((t) => t.id === id)) id = "home";
+    // Sleep Mode (sleep.js) locks every tab but Huddle.
+    const S = window.HuddleSleep;
+    if (S && S.on && id !== "huddle" && !S.lets(id)) { if (started) S.locked(id); id = "huddle"; }
     current = id;
     started = true;
     if (inCall()) { sync(); return; }

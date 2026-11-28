@@ -5,6 +5,7 @@ const store = require("./store");
 const pipAi = require("./pip-ai");
 const phone = require("./phone");
 const { notify, route: pushRoute } = require("./notify");
+const buddy = require("./buddy");
 const storage = require("./post-storage");
 const alarmServer = require("./alarm-server");
 const crypto = require("crypto");
@@ -226,6 +227,12 @@ async function handle(req, res, url) {
       const r = await pushRoute(req.method, parts[1], me, body);
       return json(res, r.status, r.body);
     }
+    // Huddle Buddies for Sleep Mode (buddy.js).
+    if (parts[0] === "buddy" && parts[1] && parts.length === 2) {
+      const body = req.method === "POST" ? await readJson(req) : {};
+      const r = await buddy.route(req.method, parts[1], me, body, push);
+      return json(res, r.status, r.body);
+    }
     // The Phone screen: calls and voicemails with real phone numbers.
     if (parts[0] === "phone" && parts[1] && parts.length === 2) {
       const body = req.method === "POST" ? await readJson(req) : {};
@@ -350,7 +357,7 @@ async function handle(req, res, url) {
         const others = store.chatPeople(chat).filter((u) => u !== me.id && !hide.has(u));
         for (const u of others) {
           push(u, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me), group: chat.group ? chat.name : null });
-          notify(u, { kind: "call", cat: "huddle-call", ring: true, title: chat.group ? `${me.display} is calling ${chat.name}` : `${me.display} is calling`, body: chat.group ? "Group call" : "Huddle call", tag: "invite-" + code, url: "/r/" + code, ttl: 60 });
+          notify(u, { kind: "call", cat: "huddle-call", ring: true, title: chat.group ? `${me.display} is calling ${chat.name}` : `${me.display} is calling`, body: chat.group ? "Group call" : "Huddle call", tag: "invite-" + code, url: "/r/" + code, ttl: 60, fromId: me.id });
         }
         return json(res, 200, { online: others.some((u) => presenceOf(u).online), group: !!chat.group });
       }

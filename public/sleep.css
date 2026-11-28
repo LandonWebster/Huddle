@@ -1,0 +1,105 @@
+/* Sleep Mode (public/sleep.js) */
+.sleep-sw {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 7px 6px 11px; border-radius: 999px;
+  border: 1px solid #2a2c3a; background: rgba(255, 255, 255, .05); color: var(--text, #f3f3fb);
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: none;
+}
+.sleep-sw .ss-moon { display: flex; color: #9a9cb0; }
+.sleep-sw .ss-moon svg { width: 16px; height: 16px; }
+.sleep-sw .track { width: 34px; height: 20px; border-radius: 999px; background: rgba(255, 255, 255, .2); position: relative; transition: background .2s; flex: none; }
+.sleep-sw .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.sleep-sw[aria-checked="true"] { border-color: #22d3ee; background: rgba(34, 211, 238, .12); }
+.sleep-sw[aria-checked="true"] .ss-moon { color: #22d3ee; }
+.sleep-sw[aria-checked="true"] .track { background: #22d3ee; }
+.sleep-sw[aria-checked="true"] .track::after { transform: translateX(14px); }
+.sleep-sw:focus-visible { outline: 2px solid #22d3ee; outline-offset: 2px; }
+@media (max-width: 360px) { .sleep-sw .ss-label { display: none; } }
+
+/* On the Huddle tab the switch only shows while Sleep Mode is on. */
+#lobby .brand .sleep-sw.in-brand { display: none; }
+body.sleep-on #lobby .brand .sleep-sw.in-brand { display: inline-flex; }
+body.sleep-on #lobby .brand .get-app, body.sleep-on #lobby .brand .mute-app { display: none; }
+
+/* Sleep Mode on: the Huddle tab shows only your Huddle Buddy. */
+.sleep-panel { display: none; }
+body.sleep-on .sleep-panel { display: flex; flex-direction: column; gap: 14px; }
+body.sleep-on #lobby .lobby-card > :not(.brand):not(.sleep-panel):not(.join-with):not(#lobbyError) { display: none !important; }
+.sp-since { margin: 0; text-align: center; font-size: 13px; color: #9aa6c4; }
+.sp-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px 18px 18px; border-radius: 24px;
+  background: linear-gradient(180deg, #0f1630, #0b0e1a); border: 1px solid #23305a; text-align: center;
+}
+.sp-kicker { color: #22d3ee; font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+.sp-av { width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; font-size: 36px; font-weight: 800; color: #fff; background: #2f55e4; background-size: cover; background-position: center; overflow: hidden; }
+.sp-av.online { box-shadow: 0 0 0 4px #0b0e1a, 0 0 0 6px #22c55e; }
+.sp-name { font-size: 21px; }
+.sp-status { color: #8d90ad; font-size: 13px; }
+.sp-status.on { color: #22c55e; }
+.sp-card .btn.primary { width: 100%; margin-top: 8px; }
+.sp-change { border: 0; background: none; color: #9aa6c4; font: inherit; font-size: 13px; font-weight: 600; padding: 8px; cursor: pointer; }
+.sp-none { margin: 0 0 6px; color: #c7c9d8; }
+
+/* Locked tabs */
+.tab.sleep-locked { opacity: .35; }
+.tab.sleep-locked .ti::after {
+  content: ""; position: absolute; top: 0; left: calc(50% + 6px); width: 12px; height: 12px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+body.sleep-on .tab .tb { display: none !important; }
+
+/* Pick your Huddle Buddy */
+.sleep-sheet-wrap { z-index: 95; }
+.sleep-pick { padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); gap: 10px; max-height: 88vh; }
+.sleep-pick h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 20px; }
+.sleep-pick h2 svg { width: 24px; height: 24px; color: #22d3ee; flex: none; }
+.sk-sub { margin: 0; font-size: 14px; color: #a1a3ad; line-height: 1.45; }
+.sk-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.sk-empty { margin: 0; color: #c7c9d8; font-size: 14px; }
+.sk-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; border: 1px solid #2a2c3a; cursor: pointer; }
+.sk-row:has(input:checked) { border-color: #22d3ee; background: rgba(34, 211, 238, .08); }
+.sk-av { width: 42px; height: 42px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; color: #fff; background: #2f55e4; background-size: cover; background-position: center; overflow: hidden; }
+.sk-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sk-txt small { color: #8d90ad; font-size: 12px; }
+.sk-txt small.on { color: #22d3ee; }
+.sk-row input { width: 20px; height: 20px; accent-color: #22d3ee; }
+.sleep-pick .btn.primary { width: 100%; text-align: center; }
+.sleep-pick .btn.primary:disabled { opacity: .5; }
+.sleep-pick .cancel { text-align: center; background: none !important; color: #a1a3ad !important; }
+.sleep-sheet-wrap .ch-sheet button[aria-pressed="true"] { outline: 2px solid #22d3ee; }
+
+/* Caller Exception row on a friend's profile */
+.sleep-exc {
+  display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 4px; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid #2a2c3a; background: #1b1d29; color: var(--text, #f3f3fb); font: inherit; text-align: left; cursor: pointer;
+}
+.sleep-exc svg { width: 20px; height: 20px; flex: none; color: #9a9cb0; }
+.sleep-exc span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sleep-exc b { font-size: 14px; }
+.sleep-exc small { font-size: 12px; color: #a1a3ad; }
+.sleep-exc.on { border-color: #22d3ee; background: rgba(34, 211, 238, .08); }
+.sleep-exc.on svg, .sleep-exc.on small { color: #22d3ee; }
+
+/* Huddle Buddy: ask button, friend sheet, requests on Home */
+.sleep-bud {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid #2f55e4; background: rgba(47, 85, 228, .16); color: var(--text, #f3f3fb); font: inherit; text-align: left; cursor: pointer;
+}
+.sleep-bud svg { width: 20px; height: 20px; flex: none; color: #22d3ee; }
+.sleep-bud span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sleep-bud b { font-size: 14px; }
+.sleep-bud small { font-size: 12px; color: #b4bbd6; }
+.sleep-bud.on { border-color: #22d3ee; background: rgba(34, 211, 238, .1); }
+.sleep-bud-holder { width: 100%; margin-top: 4px; }
+.ch-sheet .sleep-bud, .ch-sheet .sleep-exc { text-align: left; }
+.sleep-friend { padding: 16px 12px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.sf-head { display: flex; align-items: center; gap: 12px; padding: 4px 4px 8px; }
+.sf-head b { font-size: 17px; }
+.sleep-reqs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.sleep-reqs[hidden] { display: none; }
+.sr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 14px; border-radius: 18px; border: 1px solid #22d3ee; background: rgba(34, 211, 238, .08); }
+.sr-row .sk-txt b { font-size: 14px; }
+.sr-row .sk-txt { flex: 1 1 200px; }
+.sr-btns { display: flex; gap: 8px; margin-left: auto; justify-content: flex-end; }
+.sr-btns .btn { padding: 8px 14px; }

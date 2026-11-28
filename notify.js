@@ -36,7 +36,15 @@ const DEFAULT_PREFS = {
   alarms: true,      // alarms and timers ring
   sounds: true,      // notifications make a sound
   vibrate: true,     // and vibrate
+  sleep: false,      // Sleep Mode: only your Huddle Buddy can call you in Huddle
 };
+// Sleep Mode's Huddle Buddy: one friend's user id (or null). Saved with the switches above.
+// Sleep Mode Caller Exceptions: { friendUserId: "work" | "parent" }. Their Huddle calls ring in Sleep Mode.
+function cleanExceptions(x) {
+  const out = {};
+  if (x && typeof x === "object") for (const [k, v] of Object.entries(x).slice(0, 100)) if (k && k.length <= 64 && (v === "work" || v === "parent")) out[k] = v;
+  return out;
+}
 const prefsCache = new Map();
 async function getPrefs(userId) {
   if (prefsCache.has(userId)) return prefsCache.get(userId);
@@ -44,31 +52,45 @@ async function getPrefs(userId) {
   try { saved = JSON.parse((await store.getSetting("prefs:" + userId)) || "{}") || {}; } catch {}
   const p = { ...DEFAULT_PREFS };
   for (const k of Object.keys(p)) if (typeof saved[k] === "boolean") p[k] = saved[k];
+  p.buddy = typeof saved.buddy === "string" && saved.buddy ? saved.buddy : null;
+  p.exceptions = cleanExceptions(saved.exceptions);
   prefsCache.set(userId, p);
   return p;
 }
 async function setPrefs(userId, changes) {
   const p = { ...(await getPrefs(userId)) };
   for (const k of Object.keys(DEFAULT_PREFS)) if (changes && typeof changes[k] === "boolean") p[k] = changes[k];
+  if (changes && "exceptions" in changes) p.exceptions = cleanExceptions(changes.exceptions);
   await store.setSetting("prefs:" + userId, JSON.stringify(p));
   prefsCache.set(userId, p);
   return p;
 }
 
 // What a note is about decides which switch it follows (note.cat):
-//   phone-call (rings), phone-alert, huddle-call (rings), chat, alarm (rings).
+//   phone-call (rings), phone-alert, huddle-call (rings; note.fromId = the caller), chat, alarm (rings).
 // A ringing kind with its ring switch off still shows once, quietly; the others are skipped.
 function applyPrefs(note, p) {
   const cat = note.cat;
   if (cat === "phone-alert" && !p.phoneAlerts) return null;
   if (cat === "chat" && !p.chats) return null;
   if (cat === "alarm" && !p.alarms) return null;
+  // Sleep Mode: Huddle calls only get through from your Huddle Buddy and Caller Exceptions.
+  // (Phone calls: only ones forwarded from your cell ring, see phone.js. Alarms still ring.)
+  if (cat === "huddle-call" && p.sleep && !(note.fromId && (note.fromId === p.buddy || p.exceptions[note.fromId]))) return null;
   const n = { ...note };
   if (cat === "phone-call" && !p.phoneRing) n.ring = false;
   if (cat === "huddle-call" && !p.huddleRing) n.ring = false;
   if (!p.sounds) n.silent = true;
   if (!p.vibrate) n.noVibrate = true;
   return n;
+}
+
+// Huddle Buddy pairs are made by buddy.js (a request the other person accepts), never by the app.
+async function setBuddy(userId, buddyId) {
+  const p = { ...(await getPrefs(userId)), buddy: buddyId || null };
+  await store.setSetting("prefs:" + userId, JSON.stringify(p));
+  prefsCache.set(userId, p);
+  return p;
 }
 
 // Send to every device this person turned notifications on for. Never throws.
@@ -108,4 +130,4 @@ async function route(method, sub, user, body) {
   return { status: 404, body: { error: "Not found" } };
 }
 
-module.exports = { notify, route, getPrefs };
+module.exports = { notify, route, getPrefs, setBuddy };

@@ -883,7 +883,7 @@ module.exports = {
   tidyName, nameKey,
   init, get persistent() { return persistent; },
   createUser, login, newSession, userForToken, endSession, publicUser,
-  searchUsers, addFriend, listChats, chatFor, otherId, chatPeople,
+  searchUsers, addFriend, listChats, chatFor, otherId, chatPeople, isFriend,
   createGroup, addToGroup, leaveGroup, renameGroup,
   updateProfile,
   blockedEither, blockSet, blockedByMe, block, unblock, blockedList, report,

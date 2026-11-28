@@ -30,7 +30,7 @@
 const crypto = require("crypto");
 const store = require("./store");
 const live = () => require("./api"); // push + presence (required late: api.js requires this file)
-const { notify } = require("./notify");
+const { notify, getPrefs } = require("./notify");
 const billing = require("./billing");
 
 const env = (k, d) => (process.env[k] || d || "").trim();
@@ -633,6 +633,8 @@ const routes = {
       await billing.trackCall(userId, p.CallSid, from, "in");
       if ((await callLimit(userId, "in")) < 60) return voicemail(s, userId, from);
     }
+    // Sleep Mode: only calls forwarded from your own cell ring. Calls to your Huddle number go to voicemail.
+    if (!cellOwner && (await getPrefs(userId).catch(() => ({}))).sleep) return voicemail(s, userId, from);
     const name = await store.contactName(userId, from).catch(() => null);
     if (p.CallSid) {
       for (const [sid, r] of ringCalls) if (Date.now() - r.at > 10 * 60 * 1000) ringCalls.delete(sid);
