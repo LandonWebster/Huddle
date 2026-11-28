@@ -84,6 +84,10 @@
             <span class="set-txt"><b>Calls to your cell</b><small>Make Huddle ring when you miss a call on your cell.</small></span>
             <button type="button" class="btn" data-act="cell">Open</button>
           </div>
+          <div class="set-row">
+            <span class="set-txt"><b>Emergency 911</b><small>Your 911 address, the 933 test, and 911 call volume.</small></span>
+            <button type="button" class="btn" data-act="e911">Open</button>
+          </div>
           <h2 class="set-h">Good to know</h2>
           <div class="set-card set-notes">
             <p>When Huddle is closed, calls and alarms ring with your phone's notification sound, over and over until you answer or stop them.</p>
@@ -95,6 +99,7 @@
       </div>`;
     document.body.appendChild(el);
     el.querySelector('[data-act="close"]').onclick = close;
+    el.querySelector('[data-act="e911"]').onclick = () => { close(); if (window.HuddlePhoneScreen && window.HuddlePhoneScreen.openE911) window.HuddlePhoneScreen.openE911(); };
     el.querySelector('[data-act="cell"]').onclick = () => { close(); if (window.HuddlePhoneScreen && window.HuddlePhoneScreen.openCell) window.HuddlePhoneScreen.openCell(); };
     for (const b of el.querySelectorAll(".sw[data-k]")) {
       b.onclick = async () => {

@@ -360,8 +360,12 @@ async function cellRoute(method, user, body, req) {
   let s;
   try { s = await ready(req); } catch (e) { return fail(e); }
   if (method === "POST" && body.action === "forward-done") {
-    // "I've set this up": forwarding is done on the cell (the app can't see carrier settings).
+    // Finished (or "Not now") the forwarding setup: the Phone screen stops showing its row.
+    // (The app can't see carrier settings.) Settings > Phone opens the setup again.
     await store.setSetting("fwd:" + user.id, body.done === false ? "0" : "1");
+  } else if (method === "POST" && body.action === "hide-e911") {
+    // "Not now" on the Phone screen's 911 row (saving a 911 address hides it too).
+    await store.setSetting("hide-e911:" + user.id, "1");
   } else if (method === "POST" && body.action === "unlink") {
     const n = await store.cellOf(user.id);
     await store.unlinkCell(user.id);
@@ -449,6 +453,7 @@ async function cellRoute(method, user, body, req) {
     ownNumber: !!(await store.numberOf(user.id)),
     // Forwarding is set up (they said so, or a forwarded call already reached Huddle).
     forwardDone: (await store.getSetting("fwd:" + user.id)) === "1",
+    e911Hidden: (await store.getSetting("hide-e911:" + user.id)) === "1",
     needsNumber: !(await store.numberOf(user.id)) && (await payer(user.id)),
     // Where to forward: your own Huddle number. People who pay need one first; the owner uses the main one.
     huddleNumber: (await store.numberOf(user.id)) ? await huddleNumberFor(user.id, s) : (await payer(user.id)) ? null : s.callerId,
@@ -539,6 +544,7 @@ async function e911Route(method, user, body, req) {
       return { status: 400, body: { error: msg } };
     }
     await store.saveE911(user.id, addressSid, n.number, a);
+    await store.setSetting("hide-e911:" + user.id, "1"); // set up: the Phone screen's 911 row goes away
     reg = await store.e911Of(user.id);
   }
   let status = null;

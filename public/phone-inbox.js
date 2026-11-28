@@ -94,6 +94,7 @@
   });
   const goBack = () => {
     if (view === "contact" && editBack) editBack();
+    else if (view === "cell" && cellStepsShown) { cellStepsShown = false; setupDone({ action: "forward-done", done: true }); }
     else if (view === "thread" || view === "contact" || view === "cell" || view === "billing" || view === "e911") openList();
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
@@ -105,6 +106,11 @@
       if (window.HuddleTabs) window.HuddleTabs.select("phone");
       else if (root.hidden) openBtn.click();
       setTimeout(openCell, 50);
+    },
+    openE911: () => {
+      if (window.HuddleTabs) window.HuddleTabs.select("phone");
+      else if (root.hidden) openBtn.click();
+      setTimeout(openE911, 50);
     },
   };
   openBtn.onclick = () => {
@@ -125,10 +131,17 @@
         <span class="ch-sp"></span>
       </header>
       <div class="ch-body">
+        <p class="ph-tip" role="status" hidden>You can change this anytime in Settings.</p>
         <p class="ph-mine" hidden></p>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
-        <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
-        <button type="button" class="ph-cell-row" data-act="cell" hidden><span></span><b></b></button>
+        <div class="ph-setup-row" data-row="e911">
+          <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
+          <button type="button" class="ph-notnow" data-notnow="e911">Not now</button>
+        </div>
+        <div class="ph-setup-row" data-row="cell" hidden>
+          <button type="button" class="ph-cell-row" data-act="cell"><span></span><b></b></button>
+          <button type="button" class="ph-notnow" data-notnow="cell">Not now</button>
+        </div>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
           <input type="tel" inputmode="tel" autocomplete="tel" placeholder="Phone number" aria-label="Phone number" maxlength="22">
@@ -152,6 +165,15 @@
     renderNotify();
     renderCallerId();
     renderCellRow();
+    if (tipNext) { tipNext = false; showTip(); }
+    root.querySelectorAll("[data-notnow]").forEach((b) => {
+      b.onclick = async () => {
+        const which = b.dataset.notnow;
+        b.closest(".ph-setup-row").hidden = true;
+        showTip();
+        try { await api("POST", "cell", which === "cell" ? { action: "forward-done", done: true } : { action: "hide-e911" }); } catch {}
+      };
+    });
     $0('[data-act="cell"]').onclick = openCell;
     $0('[data-act="billing"]').onclick = openBilling;
     $0('[data-act="e911"]').onclick = openE911;
@@ -359,7 +381,7 @@
       e.preventDefault();
       const body = Object.fromEntries(["name", "street", "street2", "city", "region", "postal"].map((k) => [k, form[k].value]));
       form.querySelector('[type="submit"]').disabled = true;
-      try { renderE911(await api("POST", "e911", body)); toast("911 address saved"); }
+      try { await api("POST", "e911", body); toast("911 address saved"); setupDone(null); }
       catch (x) { err.textContent = x.message; form.querySelector('[type="submit"]').disabled = false; }
     };
     const t = box.querySelector('[data-act="test933"]');
@@ -432,20 +454,38 @@
     });
   }
 
+  // A short note at the top of the Phone screen after a setup row goes away.
+  let tipNext = false, tipTimer = null;
+  function showTip() {
+    const t = $0(".ph-tip");
+    if (!t) return;
+    t.hidden = false;
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => { t.hidden = true; }, 6000);
+  }
+  // A setup finished: save that it's done, go back to the Phone screen, and say where to change it.
+  function setupDone(action) {
+    if (action) api("POST", "cell", action).catch(() => {});
+    tipNext = true;
+    openList();
+  }
+
   // ---------- Your cell: link it so calls to it ring here ----------
   async function renderCellRow() {
-    const row = $0('[data-act="cell"]');
-    if (!row) return;
+    const wrap = $0('[data-row="cell"]'), sos = $0('[data-row="e911"]');
+    if (!wrap) return;
+    const row = wrap.querySelector('[data-act="cell"]');
     let j;
     try { j = await api("GET", "cell"); } catch { return; }
-    if (!root.contains(row)) return;
-    // Done setting up forwarding: no banner (Settings > Calls to your cell opens it again).
-    row.hidden = !!(j.forwardDone && j.huddleNumber);
-    if (row.hidden) return;
+    if (!root.contains(wrap)) return;
+    // Set up (or "Not now"): no row. Settings > Phone opens these setups again.
+    if (sos) sos.hidden = !!j.e911Hidden;
+    wrap.hidden = !!j.forwardDone;
+    if (wrap.hidden) return;
     row.querySelector("span").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Make Huddle ring when you miss a call on your cell";
     row.querySelector("b").textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
   }
-  let cellPoll = null;
+  let cellPoll = null, cellStepsShown = false;
   async function openCell() {
     view = "cell";
     clearTimeout(cellPoll);
@@ -483,6 +523,8 @@
           : up ? `<button class="btn primary" type="button" data-act="upgrade">Get my number: pay $${up.pay.toFixed(2)}</button>
             <p class="ph-small ph-center">$${up.month.toFixed(2)} first month + $${up.credit.toFixed(2)} call credit + ${money(up.fee)} card fee</p>` : ""}`;
     } else if (j.huddleNumber) {
+      // Backing out of these steps counts as finishing them (unless already done).
+      cellStepsShown = !j.forwardDone;
       const hn = j.huddleNumber.replace(/^\+/, ""), hn10 = hn.replace(/^1(?=\d{10}$)/, ""); // Verizon wants 10 digits
       // AT&T/T-Mobile (GSM) let you pick how long your cell rings first: 5 to 30 seconds.
       let secs = 20;
@@ -503,11 +545,7 @@
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
         </ul>
         <p class="ph-small">The number at the end of the AT&amp;T/T-Mobile code (<b class="ph-secs">${secs}</b>) is how many seconds your cell rings before the call goes to Huddle. Verizon's code has no timer: your cell rings about 4 or 5 times (around 25 seconds) first. To change the time later, just dial the new code.</p>
-        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>
-        ${j.forwardDone
-          ? `<p class="ph-ok">&#10003; Forwarding is set up. The setup button is hidden from the Phone screen. You can find this page again in Settings.</p>
-             <button class="btn" type="button" data-act="fwd-undo">Show the setup button again</button>`
-          : `<button class="btn primary" type="button" data-act="fwd-done">I've set this up</button>`}`;
+        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>`;
     }
     // Optional: your cell as caller ID.
     let cellHtml = "";
@@ -572,16 +610,6 @@
       if (e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Tap again to give it up for good"; return; }
       try { await api("POST", "billing", { action: "release-number" }); toast("Number given up. Turn off forwarding on your cell."); openCell(); }
       catch (x) { toast(x.message, 5000); }
-    });
-    on('[data-act="fwd-done"]', async (e) => {
-      e.target.disabled = true;
-      try { renderCell(await api("POST", "cell", { action: "forward-done", done: true })); toast("Got it. The setup button is hidden now."); }
-      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
-    });
-    on('[data-act="fwd-undo"]', async (e) => {
-      e.target.disabled = true;
-      try { renderCell(await api("POST", "cell", { action: "forward-done", done: false })); }
-      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
     });
     on('[data-act="unlink"]', async () => {
       try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked"); } catch (x) { toast(x.message, 5000); }
