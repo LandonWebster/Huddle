@@ -430,12 +430,16 @@ async function handle(req, res, url) {
           if ((await store.mediaOwner(String(b.mediaId || ""))) !== me.id) return json(res, 400, { error: "Upload missing" });
           const duration = kind === "voice" ? Math.max(0, Math.min(600, Number(b.duration) || 0)) : null;
           msg = { kind, mediaId: String(b.mediaId), duration, body: String(b.body || "").slice(0, 500) };
+        } else if (kind === "screenshot") {
+          // The Android app saw a screenshot of this chat. ids = the messages that were on screen.
+          const ids = (Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => /^[\w-]{1,32}$/.test(x)).slice(0, 80);
+          msg = { kind, body: JSON.stringify(ids) };
         } else return json(res, 400, { error: "Unknown message type" });
         const saved = await store.addMessage(me, chat, msg);
         pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved, from: me.display, group: chat.group ? chat.name : null }, hide);
         // Anyone with Huddle open gets it right away: that's "Delivered".
         for (const u of store.chatPeople(chat)) if (u !== me.id && !hide.has(u) && sockets.has(u)) await gotUpTo(chat, u, saved.n);
-        const preview = kind === "text" ? msg.body.slice(0, 140) : kind === "image" ? "Sent a photo" : "Sent a voice note";
+        const preview = kind === "text" ? msg.body.slice(0, 140) : kind === "image" ? "Sent a photo" : kind === "screenshot" ? "Took a screenshot of the chat" : "Sent a voice note";
         for (const u of store.chatPeople(chat)) {
           if (u === me.id || hide.has(u)) continue;
           notify(u, { kind: "text", cat: "chat", title: chat.group ? `${me.display} in ${chat.name}` : me.display, body: preview, tag: "chat-" + chat.id, url: "/?chat=" + encodeURIComponent(chat.id) });

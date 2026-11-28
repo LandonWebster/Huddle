@@ -1,6 +1,7 @@
 package com.landonwebster.huddle;
 
 import android.Manifest;
+import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -29,5 +30,26 @@ public class MainActivity extends BridgeActivity {
             ActivityCompat.requestPermissions(this, new String[] { Manifest.permission.POST_NOTIFICATIONS }, 4711);
         }
         AlarmScheduler.schedule(this);
+    }
+
+    // Android 14+ tells the app when someone takes a screenshot of it. The chat screen shows
+    // "<name> took a screenshot" to everyone in that chat.
+    private Activity.ScreenCaptureCallback screenshotCallback;
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        if (Build.VERSION.SDK_INT >= 34) {
+            if (screenshotCallback == null) screenshotCallback = HuddleNativePlugin::screenshotTaken;
+            try { registerScreenCaptureCallback(getMainExecutor(), screenshotCallback); } catch (Exception ignored) {}
+        }
+    }
+
+    @Override
+    public void onStop() {
+        if (Build.VERSION.SDK_INT >= 34 && screenshotCallback != null) {
+            try { unregisterScreenCaptureCallback(screenshotCallback); } catch (Exception ignored) {}
+        }
+        super.onStop();
     }
 }

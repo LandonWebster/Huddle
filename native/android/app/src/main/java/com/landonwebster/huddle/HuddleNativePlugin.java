@@ -56,7 +56,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  setCallVolume / restoreVolume   quiet 911 calls: the phone's volume for the call, then back
  *  showNotification            a chat or call-invite notification while Huddle is in the background
  *
- * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
+ * Events sent to the page: "screenFrame" {data (JPEG base64), width, height}, "screenShareStopped"
+ * and "screenshot" (someone took a screenshot of Huddle; Android 14+).
  */
 @CapacitorPlugin(name = "HuddleNative")
 public class HuddleNativePlugin extends Plugin {
@@ -202,6 +203,13 @@ public class HuddleNativePlugin extends Plugin {
         HuddleNativePlugin p = instance;
         if (p == null) return;
         p.notifyListeners("screenShareStopped", new JSObject());
+    }
+
+    // A screenshot was taken while Huddle was on screen (Android 14+, see MainActivity).
+    static void screenshotTaken() {
+        HuddleNativePlugin p = instance;
+        if (p == null) return;
+        p.notifyListeners("screenshot", new JSObject());
     }
 
     private boolean granted(String perm) {

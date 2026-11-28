@@ -321,6 +321,7 @@
     const who = me && m.sender === me.id ? "You: " : isGroup(c) ? senderName(c, m.sender) + ": " : "";
     if (m.kind === "image") return who + "📷 Photo";
     if (m.kind === "voice") return who + "🎤 Voice note";
+    if (m.kind === "screenshot") return (me && m.sender === me.id ? "You" : senderName(c, m.sender)) + " took a screenshot";
     return who + m.body;
   }
   function when(t) {
@@ -649,7 +650,7 @@
     if (!room || !s || !me) return;
     for (const el of s.querySelectorAll(".ch-msg.has-rcpt:not(.pending)")) { el.classList.remove("has-rcpt"); const t = el.querySelector(".ch-rcpt"); if (t) t.remove(); }
     let last = null;
-    for (const m of room.msgs.values()) if (m.sender === me.id && (!last || m.n > last.n)) last = m;
+    for (const m of room.msgs.values()) if (m.sender === me.id && m.kind !== "screenshot" && (!last || m.n > last.n)) last = m;
     if (!last) return;
     const el = s.querySelector(`.ch-msg[data-id="${CSS.escape(last.id)}"]`);
     if (!el) return;
@@ -703,12 +704,26 @@
     }
   }
   function renderMessage(m) {
+    if (m.kind === "screenshot") return renderNotice(m);
     const mine = me && m.sender === me.id;
     const el = document.createElement("div");
     el.className = "ch-msg" + (mine ? " mine" : "") + (m.pinned ? " pinned" : "");
     el.dataset.id = m.id; el.dataset.n = m.n; el.dataset.at = m.at;
     el.innerHTML = (!mine && room && isGroup(room.chat) ? `<span class="ch-from">${esc(senderName(room.chat, m.sender))}</span>` : "") + bubbleHtml(m);
     wireBubble(el, m);
+    return el;
+  }
+  // "<name> took a screenshot". Tap it to see which messages were on their screen.
+  function renderNotice(m) {
+    const el = document.createElement("div");
+    el.className = "ch-msg notice";
+    el.dataset.id = m.id; el.dataset.n = m.n; el.dataset.at = m.at;
+    const who = me && m.sender === me.id ? "You" : senderName(room && room.chat, m.sender);
+    const time = new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    el.innerHTML = `<button type="button" class="ch-notice">📸 ${esc(who)} took a screenshot · ${time}</button>`;
+    let ids = [];
+    try { ids = JSON.parse(m.body || "[]"); } catch {}
+    el.querySelector("button").onclick = () => { if (ids.length) jumpTo(ids[0], ids); else toast("No messages were on screen"); };
     return el;
   }
   function bubbleHtml(m) {
@@ -720,7 +735,7 @@
     return `<div class="ch-bubble ${m.kind}">${inner}<span class="ch-time">${m.pinned ? `<span class="ch-pin-mark" title="Pinned">${IC.pin}</span>` : ""}${time}</span></div>`;
   }
   function updateMessage(m) {
-    if (!room || !room.msgs.has(m.id)) return;
+    if (!room || !room.msgs.has(m.id) || m.kind === "screenshot") return;
     room.msgs.set(m.id, m);
     const el = stream().querySelector(`[data-id="${CSS.escape(m.id)}"]`);
     if (!el) return;
@@ -804,7 +819,7 @@
     for (const b of wrap.querySelectorAll("button[data-id]")) b.onclick = () => { close(); jumpTo(b.dataset.id); };
   }
   // Take you back to a message in the chat, loading the part of the chat around it if needed.
-  async function jumpTo(id) {
+  async function jumpTo(id, highlight) {
     const r = room;
     let el = stream().querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (!el) {
@@ -819,6 +834,12 @@
       } catch (ex) { toast(ex.message); return; }
     }
     if (!el) { toast("That message is gone"); return; }
+    if (highlight && highlight.length) {
+      const els = highlight.map((x) => stream().querySelector(`[data-id="${CSS.escape(x)}"]`)).filter(Boolean);
+      (els.length > 1 ? els[Math.floor(els.length / 2)] : el).scrollIntoView({ block: "center" });
+      for (const e of els) { e.classList.remove("shot"); void e.offsetWidth; e.classList.add("shot"); }
+      return;
+    }
     el.scrollIntoView({ block: "center" });
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
   }
@@ -835,6 +856,25 @@
     if (history.state && history.state.huddleChats) history.back();
     setTimeout(() => h.joinRoom(code), 50);
   }
+
+  // ----- Screenshots (Android app, Android 14+) -----
+  // Android tells the app when a screenshot is taken. If a chat is open, everyone in it sees
+  // "<name> took a screenshot", and tapping that highlights the messages that were on screen.
+  function onScreenshot() {
+    if (view !== "room" || !room || document.hidden) return;
+    const b = box(), top = b.getBoundingClientRect();
+    const ids = [...stream().querySelectorAll(".ch-msg[data-id]:not(.notice)")].filter((e) => {
+      const r = e.getBoundingClientRect();
+      return r.bottom > top.top && r.top < top.bottom;
+    }).map((e) => e.dataset.id);
+    const r = room;
+    api(`/chats/${r.id}/messages`, { body: { kind: "screenshot", ids } })
+      .then((j) => { if (room === r) addMessages([j.message], true); }).catch(() => {});
+  }
+  try {
+    const Cap = window.Capacitor;
+    if (Cap && Cap.addListener && Cap.getPlatform && Cap.getPlatform() === "android") Cap.addListener("HuddleNative", "screenshot", onScreenshot);
+  } catch {}
 
   // ----- Sending -----
   async function sendText(body) {
