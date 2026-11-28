@@ -1,6 +1,6 @@
 // Huddle service worker: lets the installed app open quickly, and even without a connection.
 // Calls themselves always need the internet; only the app's own files are cached.
-const CACHE = "huddle-v44";
+const CACHE = "huddle-v45";
 const SHELL = [
   "/", "/style.css", "/app.js", "/games/hub.js", "/games/butter.js", "/chats.js", "/phone.js", "/phone-inbox.js", "/notifications.js", "/pip-brain.js", "/pip.js", "/games/tictactoe.js", "/games/connect4.js", "/games/trivia.js", "/settings.js", "/tabs.js", "/home.js", "/alarms.js", "/feeds.js", "/manifest.webmanifest", "/icon.svg",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
@@ -54,9 +54,18 @@ const ringing = new Map(); // tag -> { stop }
 async function closeTag(tag) {
   for (const x of await self.registration.getNotifications()) if (x.data && x.data.ringTag === tag) x.close();
 }
-function stopRing(tag) {
+function stopRing(tag, quietly) {
   const r = ringing.get(tag);
   if (r) { r.stop = true; ringing.delete(tag); }
+  if (!quietly) tellWindows({ type: "huddle-ring-stop", tag });
+}
+// Huddle open in the background (another app in front, minimized, another tab): the app itself
+// plays a real looping ringtone (settings.js HuddleRing), alongside the notifications.
+async function tellWindows(msg) {
+  try {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const w of wins) w.postMessage(msg);
+  } catch {}
 }
 const kindOf = (n) => n.kind === "alarm" ? "alarm" : n.cat === "huddle-call" ? "invite" : "call";
 function ringLook(n, kind) {
@@ -79,7 +88,7 @@ function ringLook(n, kind) {
 async function ring(n) {
   const tag = n.tag || "pcall";
   const kind = kindOf(n);
-  stopRing(tag);
+  stopRing(tag, true);
   const me = { stop: false };
   ringing.set(tag, me);
   const start = Date.now();
@@ -117,11 +126,14 @@ self.addEventListener("push", (e) => {
   try { n = e.data ? e.data.json() : {}; } catch {}
   e.waitUntil((async () => {
     // Anything new about this call or alarm (answered, missed, stopped elsewhere) stops it ringing.
-    if (n.tag && ringing.has(n.tag)) { stopRing(n.tag); await closeTag(n.tag); }
-    if (n.kind === "call-end") { if (n.tag) await closeTag(n.tag); return; }
+    if (n.tag && ringing.has(n.tag)) { stopRing(n.tag, !!n.ring); await closeTag(n.tag); }
+    if (n.kind === "call-end") { if (n.tag) { await closeTag(n.tag); tellWindows({ type: "huddle-ring-stop", tag: n.tag }); } return; }
     const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     if (wins.some((w) => w.visibilityState === "visible" && w.focused)) return;
-    if (n.ring) return ring(n);
+    if (n.ring) {
+      if (!n.silent) tellWindows({ type: "huddle-ring", tag: n.tag || "pcall", kind: kindOf(n) === "alarm" ? "alarm" : "call", cat: n.cat || null });
+      return ring(n);
+    }
     const loud = n.kind === "call" || n.kind === "alarm";
     await self.registration.showNotification(n.title || "Huddle", {
       body: n.body || "",

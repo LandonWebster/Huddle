@@ -209,11 +209,9 @@
         allowIncomingWhileBusy: false,
         getUserMedia: phoneInput,
       });
-      // A ringtone for call-backs; no extra beeps when calling out or hanging up.
-      // (Settings > Phone calls ring, and Sounds, can turn the ringtone off.)
-      const ringOn = () => !window.HuddlePrefs || (window.HuddlePrefs.get("phoneRing") && window.HuddlePrefs.get("sounds"));
-      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(ringOn()); } catch {}
-      window.addEventListener("huddle:prefs", () => { try { d.audio.incoming(ringOn()); } catch {} });
+      // Huddle plays its own ringtone for call-backs (HuddleRing in settings.js), so the phone
+      // service's sounds stay off.
+      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(false); } catch {}
       // Tell the server the line is connected, so a caller waiting on hold gets put through.
       d.on("registered", sayReady);
       d.on("tokenWillExpire", () => getToken(true).then((x) => x.token && d.updateToken(x.token)).catch(() => {}));
@@ -367,7 +365,20 @@
     const viaCell = c.customParameters && c.customParameters.get && c.customParameters.get("via") === "cell";
     ring.querySelector("small").textContent = viaCell ? "is calling your cell" : "is calling your Huddle number";
     ring.hidden = false;
-    const gone = () => { if (ringing && ringing.c === c) { ringing = null; ring.hidden = true; } };
+    // Ring: a real ringtone in the app (Settings > Phone calls ring), and in the Android app with
+    // Huddle in the background, a full-screen ringing call notification too.
+    const tag = "pcall-" + (normalize(from) || from);
+    if (window.HuddleRing) window.HuddleRing.start(tag, "call", "phone-call");
+    if (H.isNativeApp && H.native && document.hidden && (!window.HuddlePrefs || window.HuddlePrefs.get("phoneRing"))) {
+      H.native("showNotification", { channel: "calls", fullScreen: true, action: "Answer", tag, title: saved || label(normalize(from) || from), body: viaCell ? "Calling your cell" : "Phone call", url: "/?phone=" + encodeURIComponent(normalize(from) || from) + "&answer=1",
+        silent: !!(window.HuddlePrefs && !window.HuddlePrefs.get("sounds")), vibrate: !(window.HuddlePrefs && !window.HuddlePrefs.get("vibrate")) }).catch(() => {});
+    }
+    const quiet = () => {
+      if (window.HuddleRing) window.HuddleRing.stop(tag);
+      if (H.isNativeApp && H.native) H.native("cancelNotification", { tag }).catch(() => {});
+    };
+    ringing.quiet = quiet;
+    const gone = () => { quiet(); if (ringing && ringing.c === c) { ringing = null; ring.hidden = true; } };
     c.on("cancel", gone);
     c.on("disconnect", gone);
     c.on("reject", gone);
@@ -387,6 +398,7 @@
     const act = e.target.closest("[data-act]");
     if (!act || !ringing) return;
     const { c, from } = ringing;
+    if (ringing.quiet) ringing.quiet();
     ringing = null;
     ring.hidden = true;
     if (act.dataset.act === "decline") { try { c.reject(); } catch {} return; }

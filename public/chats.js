@@ -1063,9 +1063,14 @@
     // It rings (Settings > Huddle calls ring). In the Android app with Huddle in the background,
     // the phone shows a ringing notification too.
     const P = window.HuddlePrefs;
-    const stopRing = P && P.get("huddleRing") ? P.ringtone() : () => {};
-    nativeNote({ channel: P && !P.get("huddleRing") ? "messages" : "calls", title: m.group ? `${m.from.display} is calling ${m.group}` : `${m.from.display} is calling`, body: "Huddle call", tag: "invite-" + m.room, url: "/r/" + m.room });
-    const close = () => { stopRing(); if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer); };
+    const ringTag = "invite-" + m.room;
+    if (window.HuddleRing) window.HuddleRing.start(ringTag, "call", "huddle-call");
+    nativeNote({ channel: P && !P.get("huddleRing") ? "messages" : "calls", fullScreen: !!(P && P.get("huddleRing")), action: "Join", title: m.group ? `${m.from.display} is calling ${m.group}` : `${m.from.display} is calling`, body: "Huddle call", tag: ringTag, url: "/r/" + m.room });
+    const close = () => {
+      if (window.HuddleRing) window.HuddleRing.stop(ringTag);
+      if (H().isNativeApp && H().native) H().native("cancelNotification", { tag: ringTag }).catch(() => {});
+      if (inviteEl) inviteEl.remove(); inviteEl = null; clearTimeout(inviteTimer);
+    };
     inviteEl.querySelector(".ic-no").onclick = close;
     inviteEl.querySelector(".ic-yes").onclick = () => {
       close();
