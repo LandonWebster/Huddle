@@ -147,7 +147,16 @@
       else if (act === "comments") b.onclick = (e) => { e.stopPropagation(); comments(p); };
       else if (act === "more") b.onclick = (e) => { e.stopPropagation(); moreMenu(p, after); };
     }
-    for (const a of el.querySelectorAll(".fd-av")) paint(a, p.user);
+    for (const a of el.querySelectorAll(".fd-av")) {
+      paint(a, p.user);
+      // Tap someone's picture to see their profile.
+      if (p.user && window.HuddleChats && window.HuddleChats.profile) {
+        a.classList.add("tappable");
+        a.setAttribute("role", "button");
+        a.setAttribute("aria-label", `${p.user.display}'s profile`);
+        a.onclick = (e) => { e.stopPropagation(); window.HuddleChats.profile(p.user); };
+      }
+    }
     refreshMarks(p, el);
   }
 

@@ -233,6 +233,8 @@
   window.HuddleChats = {
     hide: () => { if (!gate) hide(); },
     accountMenu: () => { if (me) openAccountMenu(); },
+    // Open someone's profile page from anywhere (feeds, call tiles).
+    profile: (u) => { if (me) showProfile(u); },
   };
 
   // ----- Chats list -----
@@ -385,100 +387,34 @@
   }
 
   // ----- Profiles -----
-  // Someone's profile card: big avatar, name, bio, and what you can do.
+  // Someone's full profile page (public/profile.js). c is the chat it was opened from, if any.
   function showProfile(u, c) {
-    const wrap = document.createElement("div");
-    wrap.className = "ch-sheet-wrap";
-    const status = u.inCall ? "In a call" : u.online ? "On Huddle now" : "Away";
-    wrap.innerHTML = `<div class="ch-sheet ch-profile" role="dialog" aria-label="${esc(u.display)}">
-      ${av(u, "xl")}
-      <strong class="pf-name">${esc(u.display)}</strong>
-      <span class="pf-status${u.online ? " on" : ""}">${status}</span>
-      ${u.bio ? `<p class="pf-bio">${esc(u.bio)}</p>` : ""}
-      <div class="pf-actions">
-        ${c ? '<button type="button" class="pf-call" data-p="call">📹 Call</button>' : ""}
-        <button type="button" data-p="report">⚠️ Report</button>
-        <button type="button" class="danger" data-p="block">🚫 Block</button>
-      </div>
-      <button type="button" class="cancel">Close</button></div>`;
-    (root.hidden ? document.body : root).appendChild(wrap);
-    // Huddle Sleep Mode Caller Exception (sleep.js), for friends.
-    if (c && window.HuddleSleep) window.HuddleSleep.profileRow(wrap.querySelector(".pf-actions"), u);
-    const close = () => wrap.remove();
-    wrap.onclick = (e) => { if (e.target === wrap) close(); };
-    wrap.querySelector(".cancel").onclick = close;
-    const act = (k, fn) => { const b = wrap.querySelector(`[data-p="${k}"]`); if (b) b.onclick = () => { close(); fn(); }; };
-    act("call", () => startCallWith());
-    act("report", () => reportSheet(u, c && c.id));
-    act("block", () => blockSheet(u));
-  }
-  // Square-crop a picked photo to 400x400 so profile pictures are small and quick to load.
-  async function squarePhoto(f) {
-    const url = URL.createObjectURL(f);
-    try {
-      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-      const side = Math.min(img.naturalWidth, img.naturalHeight), size = Math.min(400, side);
-      const cv = document.createElement("canvas");
-      cv.width = cv.height = size;
-      cv.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
-      return await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.86));
-    } finally { URL.revokeObjectURL(url); }
+    if (!u || !window.HuddleProfile) return;
+    const isMe = !!(me && u.id === me.id);
+    if (!c && !isMe) c = chatsCache.find((x) => !isGroup(x) && x.friend && x.friend.id === u.id) || null;
+    const fromRoom = !!(c && room && room.id === c.id);
+    window.HuddleProfile.open(u, {
+      api, isMe,
+      onEdit: editProfile,
+      onCall: c ? () => { if (!fromRoom) { show(); openRoom(c); } startCallWith(); } : null,
+      onMessage: c && !fromRoom ? () => { show(); openRoom(c); } : null,
+      onReport: () => reportSheet(u, c && c.id),
+      onBlock: () => blockSheet(u),
+      // Huddle Sleep Mode Caller Exception and Huddle Buddies (sleep.js), for friends.
+      afterActions: c && window.HuddleSleep ? (el) => window.HuddleSleep.profileRow(el, u) : null,
+    });
   }
   function editProfile() {
-    if (!me) return;
-    const draft = { photo: me.photo || null, color: me.color || "blue", bio: me.bio || "" };
-    const wrap = document.createElement("div");
-    wrap.className = "ch-overlay";
-    wrap.innerHTML = `
-      <div class="ch-panel" role="dialog" aria-label="Edit my profile">
-        <header class="ch-head"><button class="ch-icon" data-act="x" aria-label="Close">${IC.back}</button><strong>My profile</strong><span class="ch-sp"></span></header>
-        <div class="pf-edit">
-          <div class="pf-preview"></div>
-          <strong class="pf-name">${esc(me.display)}</strong>
-          <div class="pf-photo-btns">
-            <button type="button" class="btn small" data-act="pick">📷 ${me.photo ? "Change photo" : "Add a photo"}</button>
-            <button type="button" class="pf-remove" data-act="remove" ${me.photo ? "" : "hidden"}>Remove photo</button>
-          </div>
-          <input type="file" accept="image/*" hidden>
-          <p class="pf-label">Avatar color</p>
-          <div class="pf-colors">${COLOR_NAMES.map((n) => `<button type="button" data-c="${n}" aria-label="${n}" style="background:${avBg(n)}"></button>`).join("")}</div>
-          <p class="pf-label">About me <small>(up to 80 letters)</small></p>
-          <input class="ch-gname pf-bio-in" maxlength="80" placeholder="Like: Roblox builder, loves Connect Four" value="${esc(draft.bio)}">
-          <button type="button" class="btn primary pf-save">Save</button>
-        </div>
-      </div>`;
-    root.appendChild(wrap);
-    const $ = (s) => wrap.querySelector(s);
-    const close = () => wrap.remove();
-    const draw = () => {
-      $(".pf-preview").innerHTML = av({ ...me, ...draft }, "xl");
-      for (const b of wrap.querySelectorAll("[data-c]")) b.classList.toggle("on", b.dataset.c === draft.color);
-      $('[data-act="remove"]').hidden = !draft.photo;
-    };
-    draw();
-    $('[data-act="x"]').onclick = close;
-    for (const b of wrap.querySelectorAll("[data-c]")) b.onclick = () => { draft.color = b.dataset.c; draw(); };
-    const file = $("input[type=file]");
-    $('[data-act="pick"]').onclick = () => file.click();
-    file.onchange = async () => {
-      const f = file.files && file.files[0]; file.value = "";
-      if (!f) return;
-      try { toast("Uploading photo…", 1500); draft.photo = await upload(await squarePhoto(f), "image/jpeg"); draw(); }
-      catch (ex) { toast(ex.message); }
-    };
-    $('[data-act="remove"]').onclick = () => { draft.photo = null; draw(); };
-    $(".pf-save").onclick = async () => {
-      draft.bio = $(".pf-bio-in").value;
-      try {
-        const r = await api("/profile", { body: draft });
+    if (!me || !window.HuddleProfile) return;
+    window.HuddleProfile.edit({
+      api, upload, me,
+      onSaved: (r) => {
         me = r.user;
         window.HuddleAccount.user = me;
         if (H().profileChanged) H().profileChanged();
-        toast("Profile saved");
-        close();
         if (view === "list") loadList();
-      } catch (ex) { toast(ex.message); }
-    };
+      },
+    });
   }
 
   function openAccountMenu() {

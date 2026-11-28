@@ -204,6 +204,12 @@ async function handle(req, res, url) {
       for (const c of await store.listChats(me)) if (c.friend) push(c.friend.id, { type: "chats-changed" });
       return json(res, 200, r);
     }
+    // Someone's full profile page: banner, big photo, bio, games, songs and socials.
+    if (req.method === "GET" && parts[0] === "profiles" && parts[1] && parts.length === 2) {
+      const p = await store.profileFor(me, parts[1] === "me" ? me.id : parts[1]);
+      if (!p) return json(res, 404, { error: "That profile isn't available" });
+      return json(res, 200, { profile: p });
+    }
     if (route === "GET /blocks") return json(res, 200, { users: await store.blockedList(me) });
     if (route === "POST /blocks") {
       const { userId } = await readJson(req);
