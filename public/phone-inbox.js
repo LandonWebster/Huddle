@@ -98,7 +98,15 @@
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
   // For the tab bar (public/tabs.js).
-  window.HuddlePhoneScreen = { hide: () => hide() };
+  // openCell: the "Calls to your cell" setup (from Settings).
+  window.HuddlePhoneScreen = {
+    hide: () => hide(),
+    openCell: () => {
+      if (window.HuddleTabs) window.HuddleTabs.select("phone");
+      else if (root.hidden) openBtn.click();
+      setTimeout(openCell, 50);
+    },
+  };
   openBtn.onclick = () => {
     if (!token()) { toast("Sign in to use the phone"); return; }
     show();
@@ -415,7 +423,9 @@
     let j;
     try { j = await api("GET", "cell"); } catch { return; }
     if (!root.contains(row)) return;
-    row.hidden = false;
+    // Done setting up forwarding: no banner (Settings > Calls to your cell opens it again).
+    row.hidden = !!(j.forwardDone && j.huddleNumber);
+    if (row.hidden) return;
     row.querySelector("span").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Make Huddle ring when you miss a call on your cell";
     row.querySelector("b").textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
   }
@@ -477,7 +487,11 @@
           <li><b>Verizon</b><code>*71${esc(hn10)}</code></li>
         </ul>
         <p class="ph-small">The number at the end of the AT&amp;T/T-Mobile code (<b class="ph-secs">${secs}</b>) is how many seconds your cell rings before the call goes to Huddle. Verizon's code has no timer: your cell rings about 4 or 5 times (around 25 seconds) first. To change the time later, just dial the new code.</p>
-        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>`;
+        <p class="ph-small">To stop forwarding: <code>##61#</code> on AT&amp;T or T-Mobile, <code>*73</code> on Verizon. Other carriers: search "call forwarding" plus your carrier's name.</p>
+        ${j.forwardDone
+          ? `<p class="ph-ok">&#10003; Forwarding is set up. The setup button is hidden from the Phone screen. You can find this page again in Settings.</p>
+             <button class="btn" type="button" data-act="fwd-undo">Show the setup button again</button>`
+          : `<button class="btn primary" type="button" data-act="fwd-done">I've set this up</button>`}`;
     }
     // Optional: your cell as caller ID.
     let cellHtml = "";
@@ -542,6 +556,16 @@
       if (e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Tap again to give it up for good"; return; }
       try { await api("POST", "billing", { action: "release-number" }); toast("Number given up. Turn off forwarding on your cell."); openCell(); }
       catch (x) { toast(x.message, 5000); }
+    });
+    on('[data-act="fwd-done"]', async (e) => {
+      e.target.disabled = true;
+      try { renderCell(await api("POST", "cell", { action: "forward-done", done: true })); toast("Got it. The setup button is hidden now."); }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
+    });
+    on('[data-act="fwd-undo"]', async (e) => {
+      e.target.disabled = true;
+      try { renderCell(await api("POST", "cell", { action: "forward-done", done: false })); }
+      catch (x) { toast(x.message, 5000); e.target.disabled = false; }
     });
     on('[data-act="unlink"]', async () => {
       try { renderCell(await api("POST", "cell", { action: "unlink" })); toast("Cell unlinked"); } catch (x) { toast(x.message, 5000); }

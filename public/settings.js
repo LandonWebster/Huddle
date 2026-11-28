@@ -79,6 +79,11 @@
               <span class="set-txt"><b>${esc(r.t)}</b>${r.s ? `<small>${esc(r.s)}</small>` : ""}</span>
               <button type="button" class="sw" role="switch" aria-checked="${!!prefs[r.k]}" aria-label="${esc(r.t)}" data-k="${r.k}"><span class="track"></span></button>
             </div>`).join("")}
+          <h2 class="set-h">Phone</h2>
+          <div class="set-row">
+            <span class="set-txt"><b>Calls to your cell</b><small>Make Huddle ring when you miss a call on your cell.</small></span>
+            <button type="button" class="btn" data-act="cell">Open</button>
+          </div>
           <h2 class="set-h">Good to know</h2>
           <div class="set-card set-notes">
             <p>When Huddle is closed, calls and alarms ring with your phone's notification sound, over and over until you answer or stop them.</p>
@@ -90,6 +95,7 @@
       </div>`;
     document.body.appendChild(el);
     el.querySelector('[data-act="close"]').onclick = close;
+    el.querySelector('[data-act="cell"]').onclick = () => { close(); if (window.HuddlePhoneScreen && window.HuddlePhoneScreen.openCell) window.HuddlePhoneScreen.openCell(); };
     for (const b of el.querySelectorAll(".sw[data-k]")) {
       b.onclick = async () => {
         const v = b.getAttribute("aria-checked") !== "true";

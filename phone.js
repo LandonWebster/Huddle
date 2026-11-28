@@ -359,7 +359,10 @@ const gatherXml = (s, userId, number, lead) =>
 async function cellRoute(method, user, body, req) {
   let s;
   try { s = await ready(req); } catch (e) { return fail(e); }
-  if (method === "POST" && body.action === "unlink") {
+  if (method === "POST" && body.action === "forward-done") {
+    // "I've set this up": forwarding is done on the cell (the app can't see carrier settings).
+    await store.setSetting("fwd:" + user.id, body.done === false ? "0" : "1");
+  } else if (method === "POST" && body.action === "unlink") {
     const n = await store.cellOf(user.id);
     await store.unlinkCell(user.id);
     if (n && !(await isOwner(user))) {
@@ -444,6 +447,8 @@ async function cellRoute(method, user, body, req) {
     callerReady: !!cell && list.includes(cell),
     verifiedCells,
     ownNumber: !!(await store.numberOf(user.id)),
+    // Forwarding is set up (they said so, or a forwarded call already reached Huddle).
+    forwardDone: (await store.getSetting("fwd:" + user.id)) === "1",
     needsNumber: !(await store.numberOf(user.id)) && (await payer(user.id)),
     // Where to forward: your own Huddle number. People who pay need one first; the owner uses the main one.
     huddleNumber: (await store.numberOf(user.id)) ? await huddleNumberFor(user.id, s) : (await payer(user.id)) ? null : s.callerId,
@@ -609,6 +614,12 @@ const routes = {
     const fwd = normalize(p.ForwardedFrom);
     const cellOwner = numberOwner ? null : fwd && fwd !== s.callerId ? await store.cellUser(fwd) : null;
     const userId = numberOwner || cellOwner || await ownerFor(from);
+    // A forwarded call arrived: their cell forwarding works, so the setup banner can go away.
+    if (fwd && (numberOwner || cellOwner)) {
+      store.getSetting("fwd:" + userId).then((v) => {
+        if (v == null) return store.setSetting("fwd:" + userId, "1").then(() => pushTo(userId, { type: "phone-update", kind: "cell" }));
+      }).catch(() => {});
+    }
     console.log(`Incoming phone call${p.ForwardedFrom ? " (forwarded" + (cellOwner ? " from a linked cell)" : ")") : ""}`);
     if (!userId) return `<Say>${xml("Sorry, nobody can take this call right now.")}</Say><Hangup/>`;
     // People who pay for calls: track this one, and send it to voicemail if their balance is empty.
