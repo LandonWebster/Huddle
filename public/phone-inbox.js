@@ -97,6 +97,8 @@
     else if (view === "thread" || view === "contact" || view === "cell" || view === "billing" || view === "e911") openList();
     else { hide(); if (history.state && history.state.huddlePhone) history.back(); }
   };
+  // For the tab bar (public/tabs.js).
+  window.HuddlePhoneScreen = { hide: () => hide() };
   openBtn.onclick = () => {
     if (!token()) { toast("Sign in to use the phone"); return; }
     show();
@@ -109,7 +111,7 @@
     view = "list";
     current = null;
     root.innerHTML = `
-      <header class="ch-head">
+      <header class="ch-head top">
         <button class="ch-icon" data-act="back" aria-label="Back">${IC.back}</button>
         <strong>Phone</strong>
         <span class="ch-sp"></span>

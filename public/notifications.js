@@ -1,5 +1,5 @@
 // Notifications: turn them on for this device, and open the right screen when one is tapped.
-// They cover calls to your Huddle number, voicemails, chat messages and call invites.
+// They cover calls to your Huddle number, voicemails, chat messages, call invites and alarms.
 // iPhone: only works after Huddle is added to the Home Screen (Safari > Share > Add to Home Screen).
 (() => {
   "use strict";
@@ -38,7 +38,7 @@
     return Notification.permission === "granted" && (await currentSub()) ? "on" : "off";
   }
   const HELP = {
-    "android-app": "Notifications don't work in the Android app yet. Open Huddle in Chrome and use Install (or Add to Home screen) to get them.",
+    "android-app": "In the Android app, alarms ring by themselves, and calls and messages notify while Huddle is running in the background.",
     "ios-home": "On iPhone, add Huddle to your Home Screen first (Safari > Share > Add to Home Screen), then open it from there.",
     unsupported: "This browser can't show Huddle notifications.",
     blocked: "Notifications are blocked for Huddle. Turn them on in your browser or phone settings, then try again.",
@@ -92,18 +92,20 @@
     if (chat) window.dispatchEvent(new CustomEvent("huddle:open-chat", { detail: chat }));
     const phone = u.searchParams.get("phone");
     if (phone) window.dispatchEvent(new CustomEvent("huddle:open-phone", { detail: phone }));
+    if (u.searchParams.has("alarm") && window.HuddleTabs) window.HuddleTabs.select("alarms");
   }
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && e.data.type === "huddle-open") open(e.data.url); });
   }
   // Opened fresh from a notification (?chat=… or ?phone=…): open it once the app is ready.
   const q = new URLSearchParams(location.search);
-  if (q.has("chat") || q.has("phone")) {
+  if (q.has("chat") || q.has("phone") || q.has("alarm")) {
     const url = location.href;
     autoAnswer(new URL(url));
     history.replaceState(history.state, "", location.pathname);
     setTimeout(() => open(url), 1500);
   }
 
+  window.huddleOpen = open; // the Android app calls this when one of its notifications is tapped
   window.huddleNotify = { state, enable, disable, HELP };
 })();

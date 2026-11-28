@@ -622,7 +622,7 @@ const routes = {
       ringCalls.set(p.CallSid, { userId, from, at: Date.now() });
     }
     notify(userId, {
-      kind: "call", ring: true, title: name || pretty(from), body: cellOwner ? "Calling your cell" : "Calling your Huddle number",
+      kind: "call", cat: "phone-call", ring: true, title: name || pretty(from), body: cellOwner ? "Calling your cell" : "Calling your Huddle number",
       tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) + "&answer=1", ttl: 30,
       decline: p.CallSid ? `/twilio/decline?c=${encodeURIComponent(p.CallSid)}&k=${ringSig(p.CallSid)}` : undefined,
     });
@@ -662,7 +662,7 @@ const routes = {
       await store.phoneAdd(userId, from, "voicemail", { mediaId, duration: Number(p.RecordingDuration || 0), sid: p.CallSid || null });
       billing.addRecording(p.CallSid, p.RecordingDuration).catch(() => {});
       pushTo(userId, { type: "phone-update", number: from, kind: "voicemail" });
-      notify(userId, { kind: "text", title: await nameOf(userId, from), body: `New voicemail (${Math.floor((p.RecordingDuration || 0) / 60)}:${String((p.RecordingDuration || 0) % 60).padStart(2, "0")})`, tag: "pvm-" + from, url: "/?phone=" + encodeURIComponent(from) });
+      notify(userId, { kind: "text", cat: "phone-alert", title: await nameOf(userId, from), body: `New voicemail (${Math.floor((p.RecordingDuration || 0) / 60)}:${String((p.RecordingDuration || 0) % 60).padStart(2, "0")})`, tag: "pvm-" + from, url: "/?phone=" + encodeURIComponent(from) });
       if (p.RecordingSid) twilio("DELETE", `/Recordings/${p.RecordingSid}.json`).catch(() => {});
     } catch (e) { console.warn("voicemail save failed", e.message); }
     return "";
@@ -689,7 +689,7 @@ const routes = {
     ringCalls.delete(p.CallSid);
     await store.phoneAdd(r.userId, r.from, "missed").catch(() => {});
     pushTo(r.userId, { type: "phone-update", number: r.from });
-    notify(r.userId, { kind: "text", title: await nameOf(r.userId, r.from), body: "Missed call", tag: "pcall-" + r.from, url: "/?phone=" + encodeURIComponent(r.from) });
+    notify(r.userId, { kind: "text", cat: "phone-alert", title: await nameOf(r.userId, r.from), body: "Missed call", tag: "pcall-" + r.from, url: "/?phone=" + encodeURIComponent(r.from) });
     return "";
   },
   // Texting is off: anything Twilio still sends here is ignored.
@@ -699,7 +699,7 @@ const routes = {
 function voicemail(s, userId, from) {
   ringDone(userId, from);
   store.phoneAdd(userId, from, "missed").then(() => pushTo(userId, { type: "phone-update", number: from })).catch(() => {});
-  nameOf(userId, from).then((title) => notify(userId, { kind: "text", title, body: "Missed call", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) }));
+  nameOf(userId, from).then((title) => notify(userId, { kind: "text", cat: "phone-alert", title, body: "Missed call", tag: "pcall-" + from, url: "/?phone=" + encodeURIComponent(from) }));
   const qs = `u=${encodeURIComponent(userId)}&amp;n=${encodeURIComponent(from)}`;
   return `<Say>${xml(GREETING())}</Say><Record maxLength="120" timeout="5" playBeep="true" trim="trim-silence" action="${s.base}/twilio/vm-done" recordingStatusCallback="${s.base}/twilio/recording?${qs}" recordingStatusCallbackEvent="completed"/>`;
 }

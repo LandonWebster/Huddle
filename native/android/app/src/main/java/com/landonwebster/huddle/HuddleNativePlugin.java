@@ -18,9 +18,24 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
+import android.os.Build;
+import android.provider.Settings;
+
+import org.json.JSONObject;
+
 import androidx.activity.result.ActivityResult;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -35,6 +50,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  startScreenShare / stop...  share the phone screen (Android shows its own "start recording?" prompt)
  *  speak / stopSpeaking        Pip's voice (the phone's own text-to-speech)
  *  listen / stopListening      talk to Pip: speech to text (partial words arrive as "speechPartial")
+ *  setAlarms                   the Alarms tab's alarms and timer, as real phone alarms (AlarmScheduler)
+ *  notifyStatus / requestNotifications / openAlarmSettings   permission to notify and to ring on time
+ *  showNotification            a chat or call-invite notification while Huddle is in the background
  *
  * Events sent to the page: "screenFrame" {data (JPEG base64), width, height} and "screenShareStopped".
  */
@@ -285,5 +303,128 @@ public class HuddleNativePlugin extends Plugin {
         } catch (Exception e) {
             call.reject("Couldn't open the app", e);
         }
+    }
+
+    // ---------- Alarms (real phone alarms) ----------
+    @PluginMethod
+    public void setAlarms(PluginCall call) {
+        Context ctx = getContext();
+        JSArray list = call.getArray("alarms");
+        Long timer = call.getLong("timer", 0L);
+        AlarmScheduler.prefs(ctx).edit()
+            .putString("alarms", list != null ? list.toString() : "[]")
+            .putLong("timer", timer != null ? timer : 0L)
+            .putString("name", call.getString("name", ""))
+            .putBoolean("sound", Boolean.TRUE.equals(call.getBoolean("sound", true)))
+            .putBoolean("vibrate", Boolean.TRUE.equals(call.getBoolean("vibrate", true)))
+            .apply();
+        AlarmScheduler.schedule(ctx);
+        call.resolve(new JSObject().put("exact", AlarmScheduler.canExact(ctx)));
+    }
+
+    // ---------- Notifications ----------
+    @PluginMethod
+    public void notifyStatus(PluginCall call) {
+        Context ctx = getContext();
+        call.resolve(new JSObject()
+            .put("notifications", NotificationManagerCompat.from(ctx).areNotificationsEnabled())
+            .put("exactAlarms", AlarmScheduler.canExact(ctx)));
+    }
+
+    @PluginMethod
+    public void requestNotifications(PluginCall call) {
+        Context ctx = getContext();
+        if (NotificationManagerCompat.from(ctx).areNotificationsEnabled()) { call.resolve(); return; }
+        Activity a = getActivity();
+        if (Build.VERSION.SDK_INT >= 33 && a != null && !granted(Manifest.permission.POST_NOTIFICATIONS)
+                && !AlarmScheduler.prefs(ctx).getBoolean("askedNotify", false)) {
+            AlarmScheduler.prefs(ctx).edit().putBoolean("askedNotify", true).apply();
+            ActivityCompat.requestPermissions(a, new String[] { Manifest.permission.POST_NOTIFICATIONS }, 4711);
+        } else {
+            // Asked before (or older Android): the switch is in the phone's settings.
+            Intent i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.getPackageName())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { ctx.startActivity(i); } catch (Exception ignored) {}
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openAlarmSettings(PluginCall call) {
+        Context ctx = getContext();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Intent i = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + ctx.getPackageName()))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { ctx.startActivity(i); } catch (Exception ignored) {}
+        }
+        call.resolve();
+    }
+
+    /** A notification from the open app (Huddle in the background): chats and call invites. */
+    @PluginMethod
+    public void showNotification(PluginCall call) {
+        Context ctx = getContext();
+        boolean ringing = "calls".equals(call.getString("channel", "messages"));
+        boolean silent = Boolean.TRUE.equals(call.getBoolean("silent", false));
+        boolean vibrate = Boolean.TRUE.equals(call.getBoolean("vibrate", true));
+        String channel = channel(ctx, ringing, !silent, vibrate);
+        String url = call.getString("url", "/");
+        String tag = call.getString("tag", "huddle");
+        Intent open = new Intent(ctx, MainActivity.class)
+            .putExtra("huddle_url", url)
+            .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+        PendingIntent pi = PendingIntent.getActivity(ctx, tag.hashCode(), open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, channel)
+            .setSmallIcon(R.drawable.ic_stat_huddle)
+            .setContentTitle(call.getString("title", "Huddle"))
+            .setContentText(call.getString("body", ""))
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setCategory(ringing ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(ringing ? NotificationCompat.PRIORITY_MAX : NotificationCompat.PRIORITY_HIGH);
+        if (ringing) b.setTimeoutAfter(30000).addAction(0, "Join", pi);
+        if (silent) b.setSilent(true);
+        Notification n = b.build();
+        if (ringing && !silent) n.flags |= Notification.FLAG_INSISTENT; // rings until opened or 30 s pass
+        try { NotificationManagerCompat.from(ctx).notify(tag, 1, n); } catch (SecurityException ignored) {}
+        call.resolve();
+    }
+
+    private static String channel(Context ctx, boolean calls, boolean sound, boolean vibrate) {
+        String id = (calls ? "huddle_calls" : "huddle_messages") + (sound ? "_s" : "") + (vibrate ? "_v" : "");
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null && nm.getNotificationChannel(id) == null) {
+            String name = (calls ? "Huddle calls" : "Messages") + (!sound && !vibrate ? " (silent)" : !sound ? " (vibrate only)" : !vibrate ? " (no vibration)" : "");
+            NotificationChannel ch = new NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH);
+            if (sound) {
+                Uri u = RingtoneManager.getDefaultUri(calls ? RingtoneManager.TYPE_RINGTONE : RingtoneManager.TYPE_NOTIFICATION);
+                ch.setSound(u, new AudioAttributes.Builder()
+                    .setUsage(calls ? AudioAttributes.USAGE_NOTIFICATION_RINGTONE : AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            } else ch.setSound(null, null);
+            ch.enableVibration(vibrate);
+            if (vibrate && calls) ch.setVibrationPattern(new long[] { 0, 800, 400, 800, 400 });
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+            nm.createNotificationChannel(ch);
+        }
+        return id;
+    }
+
+    /** A notification was tapped while Huddle was open in the background: go to its screen. */
+    @Override
+    protected void handleOnNewIntent(Intent intent) {
+        super.handleOnNewIntent(intent);
+        openFrom(intent);
+    }
+
+    void openFrom(Intent intent) {
+        String url = intent != null ? intent.getStringExtra("huddle_url") : null;
+        if (url == null || !url.startsWith("/") || getBridge() == null || getBridge().getWebView() == null) return;
+        intent.removeExtra("huddle_url");
+        String js = "window.huddleOpen && window.huddleOpen(" + JSONObject.quote(url) + ")";
+        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(js, null));
     }
 }

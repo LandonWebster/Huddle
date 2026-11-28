@@ -5,10 +5,19 @@ const store = require("./store");
 const pipAi = require("./pip-ai");
 const phone = require("./phone");
 const { notify, route: pushRoute } = require("./notify");
+const storage = require("./post-storage");
+const alarmServer = require("./alarm-server");
+const crypto = require("crypto");
 
 const MAX_IMAGE = 6 * 1024 * 1024;
 const MAX_VOICE = 4 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+// Posts on the Video and Photos tabs.
+const MAX_POST_PHOTO = 8 * 1024 * 1024;
+const MAX_POST_VIDEO = 100 * 1024 * 1024;
+const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
+const POSTS_PER_DAY = 30;
+const MAX_VIDEO_SECONDS = 60; // keeps videos small, so free storage holds more (the app shrinks them too)
 const VOICE_TYPES = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/aac", "audio/x-m4a"];
 
 // userId -> Set of open sockets
@@ -121,6 +130,30 @@ async function handle(req, res, url) {
       return res.end(m.data);
     }
 
+    // A post's video or photo (and its preview picture). Like /media, ids are long and random.
+    if (req.method === "GET" && parts[0] === "post-media" && parts[1] && (parts[2] === "main" || parts[2] === "thumb")) {
+      const p = await store.postRow(parts[1]);
+      if (!p) return json(res, 404, { error: "Not found" });
+      const src = parts[2] === "thumb" && p.thumb ? "db:" + p.thumb : p.src;
+      if (src.startsWith("db:")) {
+        const m = await store.getMedia(src.slice(3));
+        if (!m) return json(res, 404, { error: "Not found" });
+        res.writeHead(200, { "content-type": m.mime, "cache-control": "public, max-age=31536000, immutable", "content-length": m.data.length });
+        return res.end(m.data);
+      }
+      const key = src.slice(3);
+      if (storage.publicUrl()) { res.writeHead(302, { location: storage.publicUrl() + "/" + key, "cache-control": "public, max-age=86400" }); return res.end(); }
+      if (!storage.configured()) return json(res, 404, { error: "Not found" });
+      return storage.pipeTo(key, req, res);
+    }
+
+    // Snooze / Stop tapped on an alarm notification (the service worker has no sign-in; the
+    // link's token is random and only works for that one ring).
+    if (req.method === "POST" && (parts[0] === "alarm-snooze" || parts[0] === "alarm-stop") && parts[1] && parts.length === 2) {
+      const ok = parts[0] === "alarm-snooze" ? alarmServer.snooze(parts[1]) : alarmServer.stop(parts[1]);
+      return json(res, ok ? 200 : 404, {});
+    }
+
     if (route === "POST /signup") {
       const { username, password } = await readJson(req);
       const name = store.tidyName(username);
@@ -184,7 +217,10 @@ async function handle(req, res, url) {
       const r = await phone.tokenFor(me, req, body);
       return json(res, r.status, r.body);
     }
-    // Notifications on/off for this device.
+    // Alarms (so they ring with Huddle closed).
+    if (route === "GET /alarms") return json(res, 200, await alarmServer.get(me.id));
+    if (route === "POST /alarms") return json(res, 200, await alarmServer.set(me.id, await readJson(req)));
+    // Notifications on/off for this device, and Settings switches (/push/prefs).
     if (parts[0] === "push" && parts[1] && parts.length === 2) {
       const body = req.method === "POST" ? await readJson(req) : {};
       const r = await pushRoute(req.method, parts[1], me, body);
@@ -195,6 +231,71 @@ async function handle(req, res, url) {
       const body = req.method === "POST" ? await readJson(req) : {};
       const r = await phone.appRoute(req.method, parts[1], me, url, body, req);
       return json(res, r.status, r.body);
+    }
+    // ---------- Posts (Video and Photos tabs) ----------
+    if (route === "GET /posts") {
+      const kind = url.searchParams.get("kind") === "video" ? "video" : "photo";
+      const r = await store.listPosts(me, { kind, feed: url.searchParams.get("feed") || "all", before: url.searchParams.get("before"), limit: url.searchParams.get("limit") });
+      return json(res, 200, { ...r, canVideo: storage.configured() });
+    }
+    if (route === "POST /posts") {
+      const kind = url.searchParams.get("kind") === "video" ? "video" : "photo";
+      const mime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      if (kind === "photo" && !IMAGE_TYPES.includes(mime)) return json(res, 415, { error: "That isn't a photo Huddle can show" });
+      if (kind === "video" && !VIDEO_TYPES.includes(mime)) return json(res, 415, { error: "That video type isn't supported. Try an MP4." });
+      if (kind === "video" && !storage.configured()) return json(res, 503, { error: "Posting videos isn't turned on yet (Huddle needs a place to keep them)." });
+      if ((await store.postsToday(me.id)) >= POSTS_PER_DAY) return json(res, 429, { error: "That's a lot of posts today. Try again tomorrow." });
+      const num = (k) => { const v = Number(url.searchParams.get(k)); return Number.isFinite(v) && v > 0 ? v : undefined; };
+      if (kind === "video" && (num("duration") || 0) > MAX_VIDEO_SECONDS + 2) return json(res, 400, { error: `Videos can be up to ${MAX_VIDEO_SECONDS} seconds long.` });
+      let thumb = url.searchParams.get("thumb") || null;
+      if (thumb && (await store.mediaOwner(thumb)) !== me.id) thumb = null;
+      let src;
+      if (storage.configured()) {
+        const key = `${kind}s/${crypto.randomBytes(16).toString("base64url")}`;
+        await storage.put(key, req, mime, kind === "video" ? MAX_POST_VIDEO : MAX_POST_PHOTO);
+        src = "s3:" + key;
+      } else {
+        const buf = await readBody(req, MAX_POST_PHOTO);
+        if (!buf.length) return json(res, 400, { error: "Empty file" });
+        src = "db:" + (await store.saveMedia(me, mime, buf));
+      }
+      const row = await store.createPost(me, { kind, caption: url.searchParams.get("caption"), src, mime, thumb, w: num("w"), h: num("h"), duration: num("duration") });
+      const [post] = await store.postsOut(me, [row]);
+      return json(res, 200, { post });
+    }
+    if (parts[0] === "posts" && parts[1]) {
+      const pid = parts[1];
+      if (route === "POST /posts/:id/delete") {
+        const p = await store.removePost(me, pid);
+        if (!p) return json(res, 404, { error: "Post not found" });
+        if (p.src.startsWith("s3:") && storage.configured()) storage.remove(p.src.slice(3)).catch(() => {});
+        return json(res, 200, {});
+      }
+      if (route === "POST /posts/:id/report") {
+        const r = await store.reportPost(me, pid, await readJson(req));
+        if (r.error) return json(res, 400, r);
+        console.log("post report saved", me.id);
+        return json(res, 200, {});
+      }
+      const p = await store.visiblePost(me, pid);
+      if (!p) return json(res, 404, { error: "That post is gone" });
+      if (route === "GET /posts/:id") return json(res, 200, { post: (await store.postsOut(me, [p]))[0] });
+      if (route === "POST /posts/:id/like" || route === "POST /posts/:id/save") {
+        const { on } = await readJson(req);
+        await (parts[2] === "like" ? store.likePost : store.savePost)(me, p.id, !!on);
+        return json(res, 200, { post: (await store.postsOut(me, [p]))[0] });
+      }
+      if (route === "GET /posts/:id/comments") return json(res, 200, { comments: await store.postComments(me, p.id) });
+      if (route === "POST /posts/:id/comments") {
+        if (sendingTooFast(me.id)) return json(res, 429, { error: "Slow down a little" });
+        const r = await store.addComment(me, p.id, (await readJson(req)).body);
+        if (r.error) return json(res, 400, r);
+        return json(res, 200, r);
+      }
+    }
+    if (route === "POST /comments/:id/delete") {
+      if (!(await store.removeComment(me, parts[1]))) return json(res, 404, { error: "Comment not found" });
+      return json(res, 200, {});
     }
     if (route === "POST /logout") { await store.endSession(tokenOf(req)); return json(res, 200, {}); }
     if (route === "GET /users") return json(res, 200, { users: await store.searchUsers(me, url.searchParams.get("q")) });
@@ -249,7 +350,7 @@ async function handle(req, res, url) {
         const others = store.chatPeople(chat).filter((u) => u !== me.id && !hide.has(u));
         for (const u of others) {
           push(u, { type: "call-invite", chatId: chat.id, room: code, from: store.publicUser(me), group: chat.group ? chat.name : null });
-          notify(u, { kind: "call", title: chat.group ? `${me.display} is calling ${chat.name}` : `${me.display} is calling`, body: "Tap to join the Huddle call", tag: "invite-" + code, url: "/r/" + code, ttl: 60 });
+          notify(u, { kind: "call", cat: "huddle-call", ring: true, title: chat.group ? `${me.display} is calling ${chat.name}` : `${me.display} is calling`, body: chat.group ? "Group call" : "Huddle call", tag: "invite-" + code, url: "/r/" + code, ttl: 60 });
         }
         return json(res, 200, { online: others.some((u) => presenceOf(u).online), group: !!chat.group });
       }
@@ -294,11 +395,11 @@ async function handle(req, res, url) {
           msg = { kind, mediaId: String(b.mediaId), duration, body: String(b.body || "").slice(0, 500) };
         } else return json(res, 400, { error: "Unknown message type" });
         const saved = await store.addMessage(me, chat, msg);
-        pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved }, hide);
+        pushChat(chat, { type: "chat-message", chatId: chat.id, message: saved, from: me.display, group: chat.group ? chat.name : null }, hide);
         const preview = kind === "text" ? msg.body.slice(0, 140) : kind === "image" ? "Sent a photo" : "Sent a voice note";
         for (const u of store.chatPeople(chat)) {
           if (u === me.id || hide.has(u)) continue;
-          notify(u, { kind: "text", title: chat.group ? `${me.display} in ${chat.name}` : me.display, body: preview, tag: "chat-" + chat.id, url: "/?chat=" + encodeURIComponent(chat.id) });
+          notify(u, { kind: "text", cat: "chat", title: chat.group ? `${me.display} in ${chat.name}` : me.display, body: preview, tag: "chat-" + chat.id, url: "/?chat=" + encodeURIComponent(chat.id) });
         }
         return json(res, 200, { message: saved });
       }
@@ -321,9 +422,11 @@ async function handle(req, res, url) {
     return json(res, 404, { error: "Not found" });
   } catch (e) {
     if (e.status === 413) return json(res, 413, { error: "That file is too big" });
-    console.error("api error", e);
+    console.error("api error", req.method, url.pathname, e);
     if (!res.headersSent) json(res, 500, { error: "Something went wrong" });
   }
 }
+
+alarmServer.start(push);
 
 module.exports = { handle, attach, presence, push, presenceOf, offlineAt: (id) => offlineAt.get(id) || 0 };

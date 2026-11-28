@@ -90,6 +90,36 @@ is free for normal use: create a TURN key in the Cloudflare dashboard (Realtime 
 set `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` in the Render service's Environment. Tapping
 "Connecting…" on a tile shows which network paths each side found.
 
+## Tabs
+
+After signing in, Huddle opens on **Home**, with a tab bar along the bottom: Home, Contacts
+(chats & friends), Phone, Huddle (start or join a call, games), Video, Photos and Alarms. Your
+account picture is at the top left of every page. The bar hides during calls and inside a chat.
+
+- **Alarms** (alarms, timer, stopwatch) are saved with your account and ring even when Huddle is
+  closed: the server sends a ringing notification (`alarm-server.js`), and the Android app sets
+  real phone alarms with a full-screen alarm screen.
+- **Settings** (account picture > Settings): switches for phone-call ringing, Huddle-call ringing,
+  alarms, chat notifications, voicemails/missed calls, sounds and vibration. Everything is on until
+  switched off.
+- **Videos** are shrunk on the phone before posting (about 720p, H.264) and can be up to 60 seconds.
+- **Video** and **Photos** are feeds of what people post: like, comment, save, report or block.
+  A post reported by 3 different people is hidden for review (reports are saved in the
+  `reports` table).
+
+### Storage for posts (Cloudflare R2, free tier)
+
+Photos work without setup (kept small, in the database). Videos need storage:
+
+1. In Cloudflare, open **R2**, create a bucket (e.g. `huddle-posts`).
+2. **R2 > Manage API tokens > Create API token** with "Object Read & Write" on that bucket.
+3. On Render, add: `STORAGE_ENDPOINT` (the S3 address shown, `https://<account id>.r2.cloudflarestorage.com`),
+   `STORAGE_BUCKET`, `STORAGE_KEY_ID` (Access Key ID), `STORAGE_SECRET` (Secret Access Key).
+4. Optional: turn on the bucket's public r2.dev address and set `STORAGE_PUBLIC_URL` to it, so
+   videos load straight from Cloudflare instead of through the server.
+
+Any S3-compatible storage works (e.g. Backblaze B2: also set `STORAGE_REGION`).
+
 ## Chats & friends
 
 Accounts (name + password), a friends list (add by name), and saved one-to-one chats with

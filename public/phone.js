@@ -210,7 +210,10 @@
         getUserMedia: phoneInput,
       });
       // A ringtone for call-backs; no extra beeps when calling out or hanging up.
-      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(true); } catch {}
+      // (Settings > Phone calls ring, and Sounds, can turn the ringtone off.)
+      const ringOn = () => !window.HuddlePrefs || (window.HuddlePrefs.get("phoneRing") && window.HuddlePrefs.get("sounds"));
+      try { d.audio.outgoing(false); d.audio.disconnect(false); d.audio.incoming(ringOn()); } catch {}
+      window.addEventListener("huddle:prefs", () => { try { d.audio.incoming(ringOn()); } catch {} });
       // Tell the server the line is connected, so a caller waiting on hold gets put through.
       d.on("registered", sayReady);
       d.on("tokenWillExpire", () => getToken(true).then((x) => x.token && d.updateToken(x.token)).catch(() => {}));
