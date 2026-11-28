@@ -71,6 +71,13 @@ service; Huddle never asks for notification permission). GitHub Actions
 Release signing: the first build after the `HUDDLE_KEY_PASS` repository secret is added creates the
 permanent key and commits it encrypted (`native/android/app/huddle-release.keystore.enc`). Without the secret CI makes a test-signed APK.
 
+## iPhone app (ready for later)
+
+`native/ios` is the same Capacitor shell for iPhone, with real ringing calls (CallKit + PushKit),
+real alarms (AlarmKit on iOS 26+, notifications before that), Sleep Mode app blocking (Screen Time /
+FamilyControls) and a Sleep Focus filter. `.github/workflows/ios.yml` builds it unsigned on a Mac to
+check the code. It needs an Apple Developer account to install: see `native/ios/APPLE-CHECKLIST.md`.
+
 ## Games
 
 The Game button opens a Games area next to the call (the call keeps going while you play).

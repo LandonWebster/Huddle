@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push notifications (calls and chats when Huddle is closed). Change to "production" for the App Store. -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- Screen Time (Sleep Mode covers other apps). Apple must approve this for the App Store. -->
+	<key>com.apple.developer.family-controls</key>
+	<true/>
+	<!-- Call invites can break through Focus. -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
+</dict>
+</plist>
