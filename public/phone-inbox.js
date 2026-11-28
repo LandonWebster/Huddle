@@ -134,13 +134,15 @@
         <p class="ph-tip" role="status" hidden>You can change this anytime in Settings.</p>
         <p class="ph-mine" hidden></p>
         <button type="button" class="ph-cell-row ph-bal-row" data-act="billing" hidden><span></span><b>Add money</b></button>
-        <div class="ph-setup-row" data-row="e911">
-          <button type="button" class="ph-cell-row ph-sos-row" data-act="e911"><span>Emergency: call 911</span><b>Open</b></button>
-          <button type="button" class="ph-notnow" data-notnow="e911">Not now</button>
+        <div class="ph-setup-row ph-sos-row" data-row="e911">
+          <span class="ph-setup-txt">Emergency: call 911</span>
+          <button type="button" class="ph-pill skip" data-notnow="e911">Not now</button>
+          <button type="button" class="ph-pill go" data-act="e911">Open</button>
         </div>
         <div class="ph-setup-row" data-row="cell" hidden>
-          <button type="button" class="ph-cell-row" data-act="cell"><span></span><b></b></button>
-          <button type="button" class="ph-notnow" data-notnow="cell">Not now</button>
+          <span class="ph-setup-txt"></span>
+          <button type="button" class="ph-pill skip" data-notnow="cell">Not now</button>
+          <button type="button" class="ph-pill go" data-act="cell"></button>
         </div>
         <label class="ph-show" hidden><span>Calls show</span><select aria-label="Number people see when you call"></select></label>
         <form class="ch-add ph-new">
@@ -482,8 +484,8 @@
     if (sos) sos.hidden = !!j.e911Hidden;
     wrap.hidden = !!j.forwardDone;
     if (wrap.hidden) return;
-    row.querySelector("span").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Make Huddle ring when you miss a call on your cell";
-    row.querySelector("b").textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
+    wrap.querySelector(".ph-setup-txt").textContent = j.ownNumber ? `Your Huddle number: ${pretty(j.huddleNumber)}` : "Ring Huddle when you miss a cell call";
+    row.textContent = j.ownNumber || j.cell ? "Setup" : "Set up";
   }
   let cellPoll = null, cellStepsShown = false;
   async function openCell() {
