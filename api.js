@@ -217,7 +217,9 @@ async function handle(req, res, url) {
       const r = await phone.tokenFor(me, req, body);
       return json(res, r.status, r.body);
     }
-    // Alarms (so they ring with Huddle closed).
+    // Alarms (so they ring with Huddle closed). Snooze or Turn off in the open app stops the
+    // ringing notifications on the person's other devices (and the iPhone repeats).
+    if (route === "POST /alarms/hush") return json(res, 200, { ok: alarmServer.hush(me.id) });
     if (route === "GET /alarms") return json(res, 200, await alarmServer.get(me.id));
     if (route === "POST /alarms") return json(res, 200, await alarmServer.set(me.id, await readJson(req)));
     // Notifications on/off for this device, and Settings switches (/push/prefs).
