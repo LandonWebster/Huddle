@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS photo TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS color TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banner TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS extras TEXT;
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -245,22 +247,114 @@ const nameKey = (n) => tidyName(n).toLowerCase();
 
 const publicUser = (u) => u && { id: u.id, username: u.username, display: u.display, photo: u.photo || null, bio: u.bio || "", color: u.color || "blue" };
 const COLORS = ["blue", "cyan", "purple", "pink", "orange", "green", "red", "gold"];
-// Profile: a photo (an uploaded image you own), a short bio and an avatar color.
-async function updateProfile(me, { photo, bio, color }) {
+// Profile: a photo and banner (uploaded images you own), a bio, an avatar color, and the
+// extras shown on the full profile page: My games, My songs and social links.
+const BIO_MAX = 200, LIST_MAX = 10;
+const clean = (v, max) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+const HUDDLE_GAMES = ["butter", "trivia", "tictactoe", "connect4", "roblox"];
+// A song link must be a Spotify or YouTube page.
+function songLink(v) {
+  try {
+    const u = new URL(String(v || "").trim());
+    if (u.protocol !== "https:") return null;
+    const h = u.hostname.replace(/^(www|m)\./, "");
+    if (!["open.spotify.com", "spotify.com", "spotify.link", "youtube.com", "youtu.be", "music.youtube.com"].includes(h)) return null;
+    return u.toString().slice(0, 300);
+  } catch { return null; }
+}
+// Socials: a username or a pasted link. We keep just the username (only the characters those
+// apps allow) and build the link from it, so a typo can't become a link to somewhere else.
+const SOCIALS = {
+  youtube: { hosts: ["youtube.com", "m.youtube.com"], re: /^[A-Za-z0-9._-]{1,100}$/, url: (n) => (n.startsWith("channel/") ? `https://www.youtube.com/${n}` : `https://www.youtube.com/@${n}`) },
+  spotify: { hosts: ["open.spotify.com"], re: /^[A-Za-z0-9._-]{1,64}$/, url: (n) => `https://open.spotify.com/user/${n}` },
+  tiktok: { hosts: ["tiktok.com", "m.tiktok.com"], re: /^[A-Za-z0-9._]{1,24}$/, url: (n) => `https://www.tiktok.com/@${n}` },
+  instagram: { hosts: ["instagram.com"], re: /^[A-Za-z0-9._]{1,30}$/, url: (n) => `https://www.instagram.com/${n}` },
+};
+const SOCIAL_LABEL = { youtube: "YouTube", spotify: "Spotify", tiktok: "TikTok", instagram: "Instagram" };
+// "" = left empty, null = doesn't look like a username for that app.
+function socialName(kind, v) {
+  let t = String(v || "").trim();
+  if (!t) return "";
+  if (/^(https?:\/\/)?([a-z0-9-]+\.)*(youtube|spotify|tiktok|instagram)\.com(\/|$)/i.test(t)) {
+    try {
+      const u = new URL(/^https?:/i.test(t) ? t : "https://" + t);
+      if (!SOCIALS[kind].hosts.includes(u.hostname.replace(/^www\./, ""))) return null;
+      const seg = u.pathname.split("/").filter(Boolean);
+      if (kind === "spotify") t = seg[0] === "user" ? seg[1] || "" : "";
+      else if (kind === "youtube" && seg[0] === "channel") return /^[A-Za-z0-9_-]{1,64}$/.test(seg[1] || "") ? "channel/" + seg[1] : null;
+      else t = seg[0] || "";
+    } catch { return null; }
+  }
+  t = t.replace(/^@/, "");
+  return SOCIALS[kind].re.test(t) ? t : null;
+}
+function cleanExtras({ games, songs, socials }) {
+  const out = { games: [], songs: [], socials: {} };
+  for (const g of Array.isArray(games) ? games.slice(0, LIST_MAX) : []) {
+    const huddle = HUDDLE_GAMES.includes(g && g.huddle) ? g.huddle : null;
+    const name = clean(g && g.name, 40), note = clean(g && g.note, 40);
+    if (name) out.games.push({ name, note, huddle });
+  }
+  for (const x of Array.isArray(songs) ? songs.slice(0, LIST_MAX) : []) {
+    const title = clean(x && x.title, 60), artist = clean(x && x.artist, 60);
+    if (title) out.songs.push({ title, artist, link: (x && x.link && songLink(x.link)) || null });
+  }
+  const bad = [];
+  for (const k of Object.keys(SOCIALS)) {
+    const n = socialName(k, socials && socials[k]);
+    if (n === null) bad.push(k);
+    else if (n) out.socials[k] = n;
+  }
+  return { extras: out, bad };
+}
+function extrasOf(u) {
+  let x = {};
+  try { x = JSON.parse(u.extras || "{}") || {}; } catch {}
+  const socials = {};
+  for (const k of Object.keys(SOCIALS)) if (x.socials && x.socials[k]) socials[k] = { name: x.socials[k], url: SOCIALS[k].url(x.socials[k]) };
+  return { games: x.games || [], songs: x.songs || [], socials };
+}
+// The full profile page (what you see when you tap someone).
+const fullProfile = (u) => u && { ...publicUser(u), banner: u.banner || null, ...extrasOf(u) };
+async function profileFor(me, userId) {
+  const u = await one("SELECT * FROM users WHERE id = $1", [String(userId || "")]);
+  if (!u || (u.id !== me.id && (await blockedEither(me.id, u.id)))) return null;
+  return fullProfile(u);
+}
+async function ownImage(me, mediaId) {
+  const m = await one("SELECT owner, mime FROM media WHERE id = $1", [String(mediaId)]);
+  return !!(m && m.owner === me.id && m.mime.startsWith("image/"));
+}
+async function updateProfile(me, { photo, banner, bio, color, games, songs, socials }) {
   const set = {};
   if (photo !== undefined) {
     if (photo === null || photo === "") set.photo = null;
-    else {
-      const m = await one("SELECT owner, mime FROM media WHERE id = $1", [String(photo)]);
-      if (!m || m.owner !== me.id || !m.mime.startsWith("image/")) return { error: "Upload the photo first" };
-      set.photo = String(photo);
-    }
+    else if (await ownImage(me, photo)) set.photo = String(photo);
+    else return { error: "Upload the photo first" };
   }
-  if (bio !== undefined) set.bio = String(bio || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80) || null;
+  if (banner !== undefined) {
+    if (banner === null || banner === "") set.banner = null;
+    else if (await ownImage(me, banner)) set.banner = String(banner);
+    else return { error: "Upload the banner first" };
+  }
+  if (bio !== undefined) set.bio = String(bio || "").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, BIO_MAX) || null;
   if (color !== undefined) set.color = COLORS.includes(color) ? color : "blue";
+  if (games !== undefined || songs !== undefined || socials !== undefined) {
+    const cur = await one("SELECT extras FROM users WHERE id = $1", [me.id]);
+    let old = {};
+    try { old = JSON.parse((cur && cur.extras) || "{}") || {}; } catch {}
+    const { extras, bad } = cleanExtras({
+      games: games !== undefined ? games : old.games,
+      songs: songs !== undefined ? songs : old.songs,
+      socials: socials !== undefined ? socials : old.socials,
+    });
+    if (bad.length) return { error: `That ${bad.map((k) => SOCIAL_LABEL[k]).join(" and ")} name doesn't look right. Type just your username, or paste your profile link.` };
+    set.extras = JSON.stringify(extras);
+  }
   const keys = Object.keys(set);
   if (keys.length) await q(`UPDATE users SET ${keys.map((k, i) => `${k} = $${i + 1}`).join(", ")} WHERE id = $${keys.length + 1}`, [...keys.map((k) => set[k]), me.id]);
-  return { user: publicUser(await one("SELECT * FROM users WHERE id = $1", [me.id])) };
+  const u = await one("SELECT * FROM users WHERE id = $1", [me.id]);
+  return { user: publicUser(u), profile: fullProfile(u) };
 }
 
 async function createUser(username, password) {
@@ -885,7 +979,7 @@ module.exports = {
   createUser, login, newSession, userForToken, endSession, publicUser,
   searchUsers, addFriend, listChats, chatFor, otherId, chatPeople,
   createGroup, addToGroup, leaveGroup, renameGroup,
-  updateProfile,
+  updateProfile, profileFor,
   blockedEither, blockSet, blockedByMe, block, unblock, blockedList, report,
   addMessage, messages, messagesAfter, markRead, setPinned, pinnedMessages,
   saveMedia, getMedia, mediaOwner, loadGame, saveGame,
