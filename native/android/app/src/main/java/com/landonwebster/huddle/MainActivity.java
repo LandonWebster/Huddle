@@ -6,7 +6,9 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebSettings;
+import android.webkit.WebView;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -32,6 +34,18 @@ public class MainActivity extends BridgeActivity {
             ActivityCompat.requestPermissions(this, new String[] { Manifest.permission.POST_NOTIFICATIONS }, 4711);
         }
         AlarmScheduler.schedule(this);
+        // Android's back button / back swipe: step back inside Huddle (close a chat, a photo,
+        // the Chats or Phone screen) the same way the browser's back does. With nothing left
+        // to go back to, tuck Huddle into the background instead of closing it, so calls
+        // and alarms keep going.
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+                if (wv != null && wv.canGoBack()) wv.goBack();
+                else moveTaskToBack(true);
+            }
+        });
     }
 
     // Android 14+ tells the app when someone takes a screenshot of it. The chat screen shows

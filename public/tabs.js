@@ -82,9 +82,12 @@
   const brand = lobby && lobby.querySelector(".brand");
   if (brand) brand.prepend(avatarButton());
 
-  // On the Contacts and Phone list screens, the back arrow becomes your account picture.
-  function decorate(root) {
-    if (!root) return;
+  // On the Contacts and Phone list screens, the back arrow becomes your account picture,
+  // but only when that screen is the current tab (the tab bar is showing). Opened from
+  // somewhere else (Home, a profile, a notification) the bar is hidden, so the back arrow
+  // stays: it's the way out.
+  function decorate(root, tab) {
+    if (!root || current !== tab) return;
     const head = root.querySelector(":scope > .ch-head.top");
     if (!head || head.querySelector(".tab-me")) return;
     const back = head.querySelector('[data-act="back"]');
@@ -135,7 +138,7 @@
     } finally { switching = false; }
     const p = pages[id];
     if (p && p.onShow) p.onShow();
-    decorate(chatsRoot); decorate(phoneRoot());
+    decorate(chatsRoot, "contacts"); decorate(phoneRoot(), "phone");
     repaintMe();
     sync();
   }
@@ -162,7 +165,7 @@
   function watch(root, tab) {
     if (!root) return;
     new MutationObserver(() => {
-      decorate(root);
+      decorate(root, tab);
       if (!switching && started && root.hidden && current === tab && !inCall()) { select("home"); return; }
       sync();
     }).observe(root, { attributes: true, attributeFilter: ["hidden"], childList: true });
